@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]        # pushing a tag like v0.1.0 publishes a Release
   pull_request:
   workflow_dispatch:   # allow manual runs from the Actions tab
 
@@ -15,7 +16,14 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+      - name: Install native deps for SkiaSharp (QR decoding)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1
       - name: Test core logic
+        env:
+          # SkiaSharp needs a usable graphics backend headless.
+          DISPLAY: ""
         run: dotnet test tests/GateLink.Core.Tests/GateLink.Core.Tests.csproj -c Release
 
   # Build the Windows desktop app and publish a self-contained .exe.
@@ -36,11 +44,15 @@ jobs:
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
             -o publish/win-x64
 
+      - name: Zip the Windows build
+        shell: pwsh
+        run: Compress-Archive -Path publish/win-x64/* -DestinationPath GateLink-windows-x64.zip -Force
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: GateLink-windows-x64
-          path: publish/win-x64/
+          path: GateLink-windows-x64.zip
           if-no-files-found: error
 
   # Build the macOS app bundle too, so both platforms come from CI.
@@ -62,3 +74,23 @@ jobs:
           name: GateLink-macos
           path: dist/GateLink-macos.zip
           if-no-files-found: error
+
+  # When a version tag (v*) is pushed, collect both builds into a GitHub Release.
+  release:
+    runs-on: ubuntu-latest
+    needs: [ build-windows, build-macos ]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/GateLink-windows-x64/GateLink-windows-x64.zip
+            artifacts/GateLink-macos/GateLink-macos.zip
+          generate_release_notes: true
