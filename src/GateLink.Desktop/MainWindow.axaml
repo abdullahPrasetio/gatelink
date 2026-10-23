@@ -3,7 +3,9 @@
         xmlns:vm="using:GateLink.Desktop"
         x:Class="GateLink.Desktop.MainWindow"
         x:DataType="vm:MainViewModel"
-        Width="380" Height="520"
+        Width="380"
+        SizeToContent="Height"
+        MaxHeight="640"
         CanResize="False"
         Title="GateLink"
         Background="#2b2b2e"
@@ -61,7 +63,7 @@
         </Style>
     </Window.Styles>
 
-    <Grid RowDefinitions="Auto,Auto,*,Auto">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto">
 
         <!-- ===== Header ===== -->
         <Border Grid.Row="0" Background="#343437" Padding="16,12" BorderBrush="#252527" BorderThickness="0,0,0,1">
@@ -142,30 +144,34 @@
                        FontWeight="SemiBold" FontSize="13" Margin="0,0,0,8"
                        IsVisible="{Binding HasAccount}" />
 
-            <TextBlock Text="Portal" Classes="label" />
-            <Border Classes="field">
-                <TextBox Classes="plain" Text="{Binding Gateway, Mode=TwoWay}"
-                         PlaceholderText="vpn.example.com" />
-            </Border>
+            <!-- Credential fields are hidden once connected, like the reference
+                 client — only status + Disconnect remain. -->
+            <StackPanel Spacing="6" IsVisible="{Binding ShowForm}">
+                <TextBlock Text="Portal" Classes="label" />
+                <Border Classes="field">
+                    <TextBox Classes="plain" Text="{Binding Gateway, Mode=TwoWay}"
+                             PlaceholderText="vpn.example.com" />
+                </Border>
 
-            <TextBlock Text="Username" Classes="label" Margin="0,12,0,4" />
-            <Border Classes="field">
-                <TextBox Classes="plain" Text="{Binding Username}" />
-            </Border>
+                <TextBlock Text="Username" Classes="label" Margin="0,12,0,4" />
+                <Border Classes="field">
+                    <TextBox Classes="plain" Text="{Binding Username}" />
+                </Border>
 
-            <TextBlock Text="Password" Classes="label" Margin="0,12,0,4" />
-            <Border Classes="field">
-                <Grid ColumnDefinitions="*,Auto">
-                    <TextBox Grid.Column="0" x:Name="PasswordBox" Classes="plain"
-                             Text="{Binding Password}"
-                             PasswordChar="{Binding PasswordChar}"
-                             RevealPassword="{Binding PasswordRevealed}" />
-                    <Button Grid.Column="1" Classes="icon" Click="OnTogglePassword"
-                            ToolTip.Tip="Show / hide password">
-                        <PathIcon Data="{StaticResource EyeIcon}" Width="16" Height="16" Foreground="#c7c7cc" />
-                    </Button>
-                </Grid>
-            </Border>
+                <TextBlock Text="Password" Classes="label" Margin="0,12,0,4" />
+                <Border Classes="field">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBox Grid.Column="0" x:Name="PasswordBox" Classes="plain"
+                                 Text="{Binding Password}"
+                                 PasswordChar="{Binding PasswordChar}"
+                                 RevealPassword="{Binding PasswordRevealed}" />
+                        <Button Grid.Column="1" Classes="icon" Click="OnTogglePassword"
+                                ToolTip.Tip="Show / hide password">
+                            <PathIcon Data="{StaticResource EyeIcon}" Width="16" Height="16" Foreground="#c7c7cc" />
+                        </Button>
+                    </Grid>
+                </Border>
+            </StackPanel>
 
             <Button Click="OnConnect" Margin="0,18,0,0" Height="44" CornerRadius="10"
                     HorizontalAlignment="Stretch"

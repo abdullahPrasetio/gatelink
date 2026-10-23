@@ -148,11 +148,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StatusColor)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StatusLine)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsConnected)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowForm)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ConnectButtonColor)));
         }
     }
 
     public bool IsConnected => _phase is VpnPhase.Connected;
+
+    /// <summary>Show the credential form only when not connected.</summary>
+    public bool ShowForm => _phase is not VpnPhase.Connected;
 
     /// <summary>Connect button colour: green when connected, blue otherwise.</summary>
     public string ConnectButtonColor => _phase switch
