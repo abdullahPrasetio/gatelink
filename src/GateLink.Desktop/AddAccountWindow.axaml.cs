@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
@@ -14,9 +15,11 @@ public partial class AddAccountWindow : Window
 
     public AddAccountWindow() => AvaloniaXamlLoader.Load(this);
 
-    private TextBox UriBox => this.FindControl<TextBox>("UriBox")!;
-    private TextBox LabelBox => this.FindControl<TextBox>("LabelBox")!;
-    private TextBlock MessageText => this.FindControl<TextBlock>("MessageText")!;
+    // Resolve controls by name at runtime to avoid depending on the XAML name
+    // generator (which clashed with manual fields across build environments).
+    private TextBox Uri => this.FindControl<TextBox>("UriBox")!;
+    private TextBox Label => this.FindControl<TextBox>("LabelBox")!;
+    private TextBlock Message => this.FindControl<TextBlock>("MessageText")!;
 
     private async void OnChooseQr(object? sender, RoutedEventArgs e)
     {
@@ -43,16 +46,16 @@ public partial class AddAccountWindow : Window
         }
         catch (Exception ex)
         {
-            MessageText.Text = $"Could not read QR: {ex.Message}";
+            Message.Text = $"Could not read QR: {ex.Message}";
         }
     }
 
     private void OnAdd(object? sender, RoutedEventArgs e)
     {
-        var text = UriBox.Text?.Trim();
+        var text = Uri.Text?.Trim();
         if (string.IsNullOrWhiteSpace(text))
         {
-            MessageText.Text = "Enter an otpauth URI or a Base32 secret.";
+            Message.Text = "Enter an otpauth URI or a Base32 secret.";
             return;
         }
 
@@ -68,7 +71,7 @@ public partial class AddAccountWindow : Window
             {
                 // Treat the input as a raw Base32 secret. Validate by decoding.
                 _ = Base32.Decode(text);
-                var label = string.IsNullOrWhiteSpace(LabelBox.Text) ? "VPN" : LabelBox.Text!.Trim();
+                var label = string.IsNullOrWhiteSpace(Label.Text) ? "VPN" : Label.Text!.Trim();
                 entry = new VaultEntry
                 {
                     Id = Guid.NewGuid().ToString("N"),
@@ -82,7 +85,7 @@ public partial class AddAccountWindow : Window
         }
         catch (Exception ex)
         {
-            MessageText.Text = $"Could not add: {ex.Message}";
+            Message.Text = $"Could not add: {ex.Message}";
         }
     }
 
