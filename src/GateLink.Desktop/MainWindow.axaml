@@ -124,6 +124,7 @@
                         <MenuFlyout>
                             <MenuItem Header="Copy code" Click="OnCopy" />
                             <MenuItem Header="Account details" Click="OnShowDetails" />
+                            <MenuItem Header="Check requirements" Click="OnCheckRequirements" />
                             <Separator />
                             <MenuItem Header="Delete account" Click="OnDeleteAccount" />
                         </MenuFlyout>

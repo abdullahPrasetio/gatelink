@@ -99,6 +99,38 @@ public partial class MainWindow : Window
 
     private void OnDeleteAccount(object? sender, RoutedEventArgs e) => Vm?.DeleteCurrentAccount();
 
+    private async void OnCheckRequirements(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is null) return;
+        _dialogOpen = true;
+        try
+        {
+            var dialog = new Window
+            {
+                Title = "Requirements",
+                Width = 440,
+                Height = 320,
+                CanResize = false,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Background = Avalonia.Media.Brush.Parse("#2b2b2e"),
+                Content = new ScrollViewer
+                {
+                    Margin = new Avalonia.Thickness(20),
+                    Content = new TextBlock
+                    {
+                        Text = Vm.PrerequisitesText(),
+                        Foreground = Avalonia.Media.Brushes.White,
+                        TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                        FontFamily = new Avalonia.Media.FontFamily("Menlo, monospace"),
+                        FontSize = 12,
+                    },
+                },
+            };
+            await dialog.ShowDialog(this);
+        }
+        finally { _dialogOpen = false; }
+    }
+
     private void OnConnect(object? sender, RoutedEventArgs e) => Vm?.BeginConnect();
 
     private void OnQuit(object? sender, RoutedEventArgs e)

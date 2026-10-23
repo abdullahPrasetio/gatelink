@@ -288,6 +288,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>Builds a human-readable prerequisite checklist for the UI.</summary>
+    public string PrerequisitesText()
+    {
+        var report = Prerequisites.Check(new VpnEnvironment());
+        var lines = report.Items.Select(i =>
+        {
+            var mark = i.Ok ? "✅" : "❌";
+            var fix = i.Ok || string.IsNullOrEmpty(i.FixHint) ? "" : $"\n     → {i.FixHint}";
+            return $"{mark}  {i.Name}: {i.Detail}{fix}";
+        });
+        var header = report.CanConnect
+            ? "Ready to connect."
+            : "Missing requirements — connect will fail until fixed.";
+        return header + "\n\n" + string.Join("\n", lines);
+    }
+
     /// <summary>Returns a details string for the current account (no secret).</summary>
     public string CurrentAccountDetails()
     {
