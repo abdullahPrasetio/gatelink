@@ -20,12 +20,20 @@ public sealed class VpnEnvironment
         : new[] { "openconnect" };
 
     // Well-known install locations per platform, searched after PATH.
+    // OpenConnect-GUI installs openconnect.exe under a bin\ subfolder, so we
+    // list both the base folders and their bin\ children.
     private static string[] CandidateDirectories => IsWindows
         ? new[]
         {
             @"C:\Program Files\OpenConnect",
+            @"C:\Program Files\OpenConnect\bin",
             @"C:\Program Files (x86)\OpenConnect",
+            @"C:\Program Files (x86)\OpenConnect\bin",
             @"C:\Program Files\OpenConnect-GUI",
+            @"C:\Program Files\OpenConnect-GUI\bin",
+            @"C:\Program Files (x86)\OpenConnect-GUI",
+            @"C:\Program Files (x86)\OpenConnect-GUI\bin",
+            @"C:\Program Files\OpenVPN\bin",
         }
         : new[]
         {
@@ -154,6 +162,42 @@ public sealed class VpnEnvironment
             }
         }
 
+        // Last resort on Windows: recursively search the Program Files trees for
+        // openconnect.exe, since installers use version-specific subfolders.
+        if (IsWindows)
+        {
+            foreach (var root in new[]
+                     {
+                         Environment.GetEnvironmentVariable("ProgramFiles"),
+                         Environment.GetEnvironmentVariable("ProgramFiles(x86)"),
+                     })
+            {
+                var found = SearchRecursively(root);
+                if (found is not null) return found;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? SearchRecursively(string? root)
+    {
+        if (string.IsNullOrEmpty(root) || !Directory.Exists(root)) return null;
+        try
+        {
+            // Only scan folders whose name hints at OpenConnect, to stay fast.
+            foreach (var dir in Directory.EnumerateDirectories(root, "*openconnect*",
+                         SearchOption.TopDirectoryOnly))
+            {
+                var hits = Directory.EnumerateFiles(dir, "openconnect.exe",
+                    SearchOption.AllDirectories);
+                foreach (var hit in hits) return hit;
+            }
+        }
+        catch
+        {
+            // ignore permission / IO errors during the scan
+        }
         return null;
     }
 }
