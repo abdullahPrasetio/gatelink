@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <RootNamespace>GateLink.Desktop</RootNamespace>
+    <AssemblyName>GateLink</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Request admin elevation only on Windows (for the Wintun/TAP adapter). -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' or $(DefineConstants.Contains('WINDOWS'))">
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Embed image assets, but not the HIP shell script. -->
+    <AvaloniaResource Include="Assets/**" Exclude="Assets/hipreport.sh" />
+    <!-- Ship hipreport.sh as a loose file next to the exe so openconnect can
+         execute it as the HIP report wrapper. -->
+    <Content Include="Assets/hipreport.sh">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Assets/hipreport.sh</Link>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\GateLink.Core\GateLink.Core.csproj" />
+  </ItemGroup>
+
+</Project>

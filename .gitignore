@@ -1,0 +1,27 @@
+# Build output
+bin/
+obj/
+dist/
+*.user
+.vs/
+.vscode/
+*.suo
+TestResults/
+
+# Publish artifacts
+publish/
+*.app/
+
+# Reverse-engineering snapshots (never commit)
+*.readb
+
+# Runtime / diagnostic logs that may contain session data
+*.log
+gatelink-auth.log
+gatelink-tunnel.log
+
+# macOS
+.DS_Store
+
+# Rider / IDE
+.idea/

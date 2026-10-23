@@ -1,0 +1,64 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:   # allow manual runs from the Actions tab
+
+jobs:
+  # Run the cross-platform unit tests.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Test core logic
+        run: dotnet test tests/GateLink.Core.Tests/GateLink.Core.Tests.csproj -c Release
+
+  # Build the Windows desktop app and publish a self-contained .exe.
+  build-windows:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Publish self-contained Windows build
+        shell: pwsh
+        run: |
+          dotnet publish src/GateLink.Desktop/GateLink.Desktop.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o publish/win-x64
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GateLink-windows-x64
+          path: publish/win-x64/
+          if-no-files-found: error
+
+  # Build the macOS app bundle too, so both platforms come from CI.
+  build-macos:
+    runs-on: macos-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Build .app bundle
+        run: ./scripts/build-macos-app.sh
+      - name: Zip the app
+        run: cd dist && zip -r GateLink-macos.zip GateLink.app
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GateLink-macos
+          path: dist/GateLink-macos.zip
+          if-no-files-found: error
