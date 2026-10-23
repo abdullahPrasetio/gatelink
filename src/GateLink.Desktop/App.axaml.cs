@@ -16,9 +16,14 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            // Menu bar app: no window at launch, no dock entry.
+            // Menu bar / tray app: no dock entry; the popover is toggled from the
+            // tray icon.
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             _window = new MainWindow { DataContext = _vm };
+
+            // Show the popover once on first launch so the user sees the UI
+            // immediately (otherwise a tray-only app looks like nothing happened).
+            ShowPopover();
         }
 
         base.OnFrameworkInitializationCompleted();
