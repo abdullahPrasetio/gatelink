@@ -111,7 +111,12 @@ public sealed class VpnSession : IAsyncDisposable
         if (Phase is VpnPhase.Disconnecting or VpnPhase.Idle) return;
 
         // Unexpected drop: attempt auto-reconnect using the last cookie.
-        _ = AutoReconnectAsync();
+        // Guard the fire-and-forget task so a failure can never crash the app.
+        _ = Task.Run(async () =>
+        {
+            try { await AutoReconnectAsync(); }
+            catch (Exception ex) { Log?.Invoke(this, $"Reconnect error: {ex.Message}"); }
+        });
     }
 
     /// <summary>
@@ -153,15 +158,27 @@ public sealed class VpnSession : IAsyncDisposable
         var token = _healthCts.Token;
         _ = Task.Run(async () =>
         {
-            while (!token.IsCancellationRequested)
+            try
             {
-                await Task.Delay(VpnConfig.HealthCheckInterval, token);
-                if (!_runner.IsRunning && Phase == VpnPhase.Connected)
+                while (!token.IsCancellationRequested)
                 {
-                    Log?.Invoke(this, "Health check: tunnel process is not running.");
-                    OnTunnelExited(this, -1);
-                    return;
+                    await Task.Delay(VpnConfig.HealthCheckInterval, token);
+                    if (!_runner.IsRunning && Phase == VpnPhase.Connected)
+                    {
+                        Log?.Invoke(this, "Health check: tunnel process is not running.");
+                        OnTunnelExited(this, -1);
+                        return;
+                    }
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal on disconnect/dispose — not an error.
+            }
+            catch (Exception ex)
+            {
+                // Never let a background exception abort the process.
+                Log?.Invoke(this, $"Health monitor error: {ex.Message}");
             }
         }, token);
     }
