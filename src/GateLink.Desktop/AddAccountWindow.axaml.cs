@@ -31,14 +31,19 @@ public partial class AddAccountWindow : Window
             {
                 new FilePickerFileType("QR images")
                 {
-                    // Broad set incl. upper/lower case and extra formats; some
-                    // platforms match patterns case-sensitively.
                     Patterns = new[]
                     {
-                        "*.png", "*.PNG", "*.jpg", "*.JPG", "*.jpeg", "*.JPEG",
-                        "*.gif", "*.GIF", "*.bmp", "*.BMP", "*.webp", "*.WEBP",
-                        "*.tif", "*.tiff", "*.heic", "*.heif",
+                        "*.png", "*.jpg", "*.jpeg", "*.jpe", "*.gif", "*.bmp",
+                        "*.webp", "*.tif", "*.tiff", "*.heic", "*.heif",
                     },
+                    // Windows matches on MIME types for some dialogs; include them
+                    // so JPEGs aren't filtered out.
+                    MimeTypes = new[]
+                    {
+                        "image/png", "image/jpeg", "image/gif", "image/bmp",
+                        "image/webp", "image/tiff", "image/heic", "image/*",
+                    },
+                    AppleUniformTypeIdentifiers = new[] { "public.image" },
                 },
                 // Escape hatch so a correctly-named file is never hidden.
                 new FilePickerFileType("All files") { Patterns = new[] { "*" } },

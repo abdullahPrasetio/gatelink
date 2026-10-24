@@ -21,6 +21,13 @@ public partial class MainWindow : Window
             // is open, otherwise the dialog is orphaned and the window vanishes.
             if (!_dialogOpen) Hide();
         };
+
+        // Press Esc to dismiss the popover (useful on Windows where there is no
+        // title-bar minimise button on a borderless popover).
+        KeyDown += (_, e) =>
+        {
+            if (e.Key == Avalonia.Input.Key.Escape) Hide();
+        };
     }
 
     private bool _dialogOpen;
