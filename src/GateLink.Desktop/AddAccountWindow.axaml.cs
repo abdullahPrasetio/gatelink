@@ -29,10 +29,19 @@ public partial class AddAccountWindow : Window
             AllowMultiple = false,
             FileTypeFilter = new[]
             {
-                new FilePickerFileType("Images")
+                new FilePickerFileType("QR images")
                 {
-                    Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.gif", "*.bmp", "*.webp" },
+                    // Broad set incl. upper/lower case and extra formats; some
+                    // platforms match patterns case-sensitively.
+                    Patterns = new[]
+                    {
+                        "*.png", "*.PNG", "*.jpg", "*.JPG", "*.jpeg", "*.JPEG",
+                        "*.gif", "*.GIF", "*.bmp", "*.BMP", "*.webp", "*.WEBP",
+                        "*.tif", "*.tiff", "*.heic", "*.heif",
+                    },
                 },
+                // Escape hatch so a correctly-named file is never hidden.
+                new FilePickerFileType("All files") { Patterns = new[] { "*" } },
             },
         });
 
