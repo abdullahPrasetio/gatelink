@@ -12,6 +12,11 @@ TestResults/
 publish/
 *.app/
 
+# Installer build artifacts
+installer/windows/payload/
+installer/windows/output/
+*.exe
+
 # Reverse-engineering snapshots (never commit)
 *.readb
 

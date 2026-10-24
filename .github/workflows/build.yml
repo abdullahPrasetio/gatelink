@@ -44,15 +44,35 @@ jobs:
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
             -o publish/win-x64
 
-      - name: Zip the Windows build
+      - name: Zip the portable Windows build
         shell: pwsh
         run: Compress-Archive -Path publish/win-x64/* -DestinationPath GateLink-windows-x64.zip -Force
 
-      - name: Upload Windows artifact
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          # Stage the published app as the installer payload.
+          New-Item -ItemType Directory -Force -Path installer/windows/payload | Out-Null
+          Copy-Item -Recurse -Force publish/win-x64/* installer/windows/payload/
+          # Inno Setup is preinstalled on windows-latest runners.
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y; $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
+          $ver = "${{ github.ref_name }}" -replace '^v',''
+          if ([string]::IsNullOrWhiteSpace($ver) -or $ver -eq "main") { $ver = "0.1.0" }
+          & $iscc "/DAppVersion=$ver" installer/windows/GateLink.iss
+
+      - name: Upload portable Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: GateLink-windows-x64
           path: GateLink-windows-x64.zip
+          if-no-files-found: error
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GateLink-windows-setup
+          path: installer/windows/output/GateLink-Setup.exe
           if-no-files-found: error
 
   # Build the macOS app bundle too, so both platforms come from CI.
@@ -91,6 +111,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            artifacts/GateLink-windows-setup/GateLink-Setup.exe
             artifacts/GateLink-windows-x64/GateLink-windows-x64.zip
             artifacts/GateLink-macos/GateLink-macos.zip
           generate_release_notes: true
