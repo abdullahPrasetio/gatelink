@@ -142,6 +142,11 @@ public sealed class VpnEnvironment
 
     private static string? ResolveOpenConnect()
     {
+        // 0. Bundled openconnect (shipped inside the app) takes priority, so the
+        //    user never needs to install it themselves.
+        var bundled = ResolveBundledOpenConnect();
+        if (bundled is not null) return bundled;
+
         // 1. PATH
         var pathVar = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
         var pathDirs = pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
@@ -177,6 +182,29 @@ public sealed class VpnEnvironment
             }
         }
 
+        return null;
+    }
+
+    /// <summary>
+    /// Finds the openconnect bundled next to the app (Assets/openconnect/). On
+    /// macOS this lives inside the .app; on Windows next to the exe.
+    /// </summary>
+    private static string? ResolveBundledOpenConnect()
+    {
+        try
+        {
+            var baseDir = AppContext.BaseDirectory;
+            var name = IsWindows ? "openconnect.exe" : "openconnect";
+            foreach (var rel in new[]
+                     {
+                         Path.Combine(baseDir, "Assets", "openconnect", name),
+                         Path.Combine(baseDir, "openconnect", name),
+                     })
+            {
+                if (File.Exists(rel)) return rel;
+            }
+        }
+        catch { /* fall through to PATH search */ }
         return null;
     }
 

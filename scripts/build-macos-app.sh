@@ -60,6 +60,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 chmod +x "$APP/Contents/MacOS/GateLink"
+# Ensure bundled helpers stay executable after copy.
+[ -f "$APP/Contents/MacOS/Assets/openconnect/openconnect" ] && chmod +x "$APP/Contents/MacOS/Assets/openconnect/openconnect"
+[ -f "$APP/Contents/MacOS/Assets/openconnect/vpnc-script" ] && chmod +x "$APP/Contents/MacOS/Assets/openconnect/vpnc-script"
+[ -f "$APP/Contents/MacOS/Assets/hipreport.sh" ] && chmod +x "$APP/Contents/MacOS/Assets/hipreport.sh"
 
 # Ad-hoc codesign so Gatekeeper/hardened features behave on the local machine.
 if command -v codesign >/dev/null; then

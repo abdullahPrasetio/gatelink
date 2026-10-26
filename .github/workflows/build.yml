@@ -99,6 +99,10 @@ jobs:
           if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then v="0.0.0"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "Building version $v"
+      - name: Install and bundle openconnect
+        run: |
+          brew install openconnect
+          ./scripts/bundle-openconnect.sh
       - name: Build .app bundle
         run: ./scripts/build-macos-app.sh
         env:
