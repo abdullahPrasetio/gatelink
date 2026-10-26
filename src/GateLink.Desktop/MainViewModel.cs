@@ -278,7 +278,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>OTP shown either as bullets (masked) or the real code.</summary>
     public string OtpMasked => OtpRevealed ? OtpDisplay : "● ● ● ● ● ●";
 
-    public void ToggleReveal() => OtpRevealed = !OtpRevealed;
+    /// <summary>
+    /// Reveals the OTP only after the vault is unlocked (Touch ID / password).
+    /// Hiding needs no auth. While the vault stays unlocked (sliding window),
+    /// subsequent reveals don't re-prompt — matching the reference app.
+    /// </summary>
+    public async void ToggleReveal()
+    {
+        if (OtpRevealed) { OtpRevealed = false; return; }   // hiding: no auth
+
+        var ok = await _vault.EnsureUnlockedAsync("Reveal your one-time code");
+        if (!ok) { StatusText = "Unlock required to reveal the code"; return; }
+        OtpRevealed = true;
+    }
 
     // add-account form
     private string _manualUri = "";
