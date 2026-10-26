@@ -10,8 +10,13 @@ namespace GateLink.Core;
 /// </summary>
 public static class UpdateChecker
 {
-    /// <summary>Current app version (set at build time via CI or manually).</summary>
-    public static readonly Version CurrentVersion = new("0.1.0");
+    /// <summary>
+    /// Current app version, read from the assembly at runtime. CI sets this
+    /// automatically from the git tag (e.g. v0.1.3 → AssemblyVersion 0.1.3).
+    /// Local dev builds default to 0.0.0 which is always "older" than any release.
+    /// </summary>
+    public static readonly Version CurrentVersion =
+        typeof(UpdateChecker).Assembly.GetName().Version ?? new Version(0, 0, 0);
 
     private const string ReleasesApi =
         "https://api.github.com/repos/abdullahPrasetio/gatelink/releases/latest";

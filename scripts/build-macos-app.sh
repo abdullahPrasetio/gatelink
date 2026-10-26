@@ -18,10 +18,14 @@ DIST="$ROOT/dist"
 APP="$DIST/GateLink.app"
 RID="osx-$(uname -m | sed 's/x86_64/x64/;s/arm64/arm64/')"
 
-echo "Building self-contained publish for ${RID} ..."
+# Version comes from CI (GATELINK_VERSION, set from the git tag); default for
+# local dev builds is 0.0.0 so they never look "newer" than a real release.
+VERSION="${GATELINK_VERSION:-0.0.0}"
+
+echo "Building self-contained publish for ${RID} (version ${VERSION}) ..."
 PUBLISH="$ROOT/src/GateLink.Desktop/bin/Release/net9.0/$RID/publish"
 dotnet publish "$PROJECT" -c Release -r "$RID" --self-contained true \
-  -p:PublishSingleFile=false >/dev/null
+  -p:PublishSingleFile=false -p:Version="$VERSION" >/dev/null
 
 echo "Assembling ${APP} ..."
 rm -rf "$APP"
@@ -34,7 +38,8 @@ cp -R "$PUBLISH/." "$APP/Contents/MacOS/"
 [ -f "$ASSETS/GateLink.icns" ] && cp "$ASSETS/GateLink.icns" "$APP/Contents/Resources/GateLink.icns"
 
 # Info.plist — LSUIElement=true makes it a menu bar app with no dock icon.
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+# Unquoted heredoc so ${VERSION} is interpolated.
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -42,8 +47,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleName</key>            <string>GateLink</string>
   <key>CFBundleDisplayName</key>     <string>GateLink</string>
   <key>CFBundleIdentifier</key>      <string>com.gatelink.app</string>
-  <key>CFBundleVersion</key>         <string>0.1.0</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key>         <string>${VERSION}</string>
+  <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
   <key>CFBundleExecutable</key>      <string>GateLink</string>
   <key>CFBundleIconFile</key>        <string>GateLink</string>
