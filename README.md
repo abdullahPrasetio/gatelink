@@ -60,6 +60,16 @@ dotnet build
 dotnet run --project src/GateLink.App
 ```
 
+## Troubleshooting
+
+**"Tunnel did not establish" / "Root authorization missing" on macOS.** Check
+`~/gatelink-tunnel.log`. If it contains `sudo: a password is required`, the rule
+in `/etc/sudoers.d/gatelink` does not cover the openconnect binary GateLink is
+using (the app prefers the copy bundled inside the `.app`). Quit and reopen
+GateLink, then press Connect once: it installs the matching rule through the
+native macOS admin prompt. Alternatively run `./scripts/install-sudoers.sh`,
+which authorizes the bundled **and** system openconnect binaries.
+
 ## Gateway
 
 The default gateway is configured in `src/GateLink.Core/VpnConfig.cs`.

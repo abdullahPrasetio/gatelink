@@ -457,7 +457,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 var ok = await Platform.SudoersSetup.EnsureInstalledAsync(env);
                 if (!ok)
                 {
-                    StatusText = "Setup cancelled. Connect needs one-time authorization.";
+                    StatusText = "Authorization failed or cancelled. GateLink needs one-time root access to start the tunnel.";
                     return;
                 }
             }

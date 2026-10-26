@@ -32,10 +32,28 @@ uninstall() {
 [[ "${1:-}" == "uninstall" ]] && uninstall
 
 # --- locate openconnect -------------------------------------------------------
-OPENCONNECT="$(command -v openconnect || true)"
-for cand in /opt/homebrew/bin/openconnect /usr/local/bin/openconnect /usr/bin/openconnect; do
-  [[ -z "${OPENCONNECT}" && -x "${cand}" ]] && OPENCONNECT="${cand}"
+# GateLink prefers the openconnect bundled inside the .app. Authorize that exact
+# path first: a rule for Homebrew only would leave the bundled binary failing
+# with "sudo: a password is required". The system binary is authorized too, for
+# builds that don't ship the bundled assets.
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BUNDLED=()
+for cand in \
+  "/Applications/GateLink.app/Contents/MacOS/Assets/openconnect/openconnect" \
+  "${ROOT}/dist/GateLink.app/Contents/MacOS/Assets/openconnect/openconnect" \
+  "${ROOT}/src/GateLink.Desktop/Assets/openconnect/openconnect"; do
+  if [[ -x "${cand}" ]]; then BUNDLED+=("${cand}"); fi
 done
+OPENCONNECT="${BUNDLED[0]:-}"
+
+SYSTEM_OPENCONNECT="$(command -v openconnect || true)"
+for cand in /opt/homebrew/bin/openconnect /usr/local/bin/openconnect /usr/bin/openconnect; do
+  [[ -z "${SYSTEM_OPENCONNECT}" && -x "${cand}" ]] && SYSTEM_OPENCONNECT="${cand}"
+done
+
+if [[ -z "${OPENCONNECT}" ]]; then
+  OPENCONNECT="${SYSTEM_OPENCONNECT}"
+fi
 
 if [[ -z "${OPENCONNECT}" ]]; then
   echo "ERROR: openconnect not found. Install it first (brew install openconnect)." >&2
@@ -48,6 +66,11 @@ KILL_BIN="/bin/kill"
 
 echo "User:        ${TARGET_USER}"
 echo "openconnect: ${OPENCONNECT}"
+for oc in "${BUNDLED[@]}"; do
+  [[ "${oc}" != "${OPENCONNECT}" ]] && echo "also allow:  ${oc}"
+done
+[[ -n "${SYSTEM_OPENCONNECT}" && "${SYSTEM_OPENCONNECT}" != "${OPENCONNECT}" ]] \
+  && echo "also allow:  ${SYSTEM_OPENCONNECT}"
 echo "kill:        ${KILL_BIN}"
 echo "Target file: ${SUDOERS_FILE}"
 echo
@@ -56,11 +79,23 @@ echo
 TMP="$(mktemp)"
 trap 'rm -f "${TMP}"' EXIT
 
-cat > "${TMP}" <<EOF
-# Installed by GateLink (install-sudoers.sh). Remove with: install-sudoers.sh uninstall
-${TARGET_USER} ALL=(root) NOPASSWD: ${OPENCONNECT}
-${TARGET_USER} ALL=(root) NOPASSWD: ${KILL_BIN}
-EOF
+{
+  echo "# Installed by GateLink (install-sudoers.sh). Remove with: install-sudoers.sh uninstall"
+  for oc in "${BUNDLED[@]}"; do
+    echo "${TARGET_USER} ALL=(root) NOPASSWD: ${oc}"
+  done
+  # System binary, if it isn't already one of the bundled paths.
+  if [[ -n "${SYSTEM_OPENCONNECT}" ]]; then
+    is_duplicate=0
+    for oc in "${BUNDLED[@]}"; do
+      if [[ "${oc}" == "${SYSTEM_OPENCONNECT}" ]]; then is_duplicate=1; fi
+    done
+    if [[ "${is_duplicate}" -eq 0 ]]; then
+      echo "${TARGET_USER} ALL=(root) NOPASSWD: ${SYSTEM_OPENCONNECT}"
+    fi
+  fi
+  echo "${TARGET_USER} ALL=(root) NOPASSWD: ${KILL_BIN}"
+} > "${TMP}"
 
 echo "The following rule will be installed:"
 echo "--------------------------------------"
@@ -78,5 +113,14 @@ sudo install -m 0440 -o root -g wheel "${TMP}" "${SUDOERS_FILE}" 2>/dev/null \
   || sudo install -m 0440 -o root "${TMP}" "${SUDOERS_FILE}"
 
 echo
+# The app cannot read the root-only sudoers file, so it uses this marker to
+# decide whether its current binary is already authorized. Keep it in sync.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  MARKER_DIR="${HOME}/Library/Application Support/GateLink"
+  mkdir -p "${MARKER_DIR}"
+  printf '%s' "${OPENCONNECT}" > "${MARKER_DIR}/sudoers-authorized-path.txt"
+  echo "Marker:      ${MARKER_DIR}/sudoers-authorized-path.txt"
+fi
+
 echo "Installed. GateLink can now bring up the tunnel without a password prompt."
 echo "To undo: ./install-sudoers.sh uninstall"

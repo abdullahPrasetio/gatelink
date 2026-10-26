@@ -150,9 +150,24 @@ public sealed class VpnSession : IAsyncDisposable
         var established = await WaitForTunnelEstablishedAsync(ct);
         if (!established)
         {
+            var detail = _runner.LastTunnelFailure;
             await _runner.StopAsync();
             Transition(VpnPhase.Failed);
-            throw new InvalidOperationException("Tunnel did not establish. Check credentials or gateway.");
+
+            // A missing sudoers rule is the most common macOS failure. It used
+            // to surface as "check credentials" even though login had already
+            // succeeded, so call it out explicitly and actionably.
+            if (detail?.StartsWith("sudo:", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                throw new InvalidOperationException(
+                    "Root authorization missing for the bundled OpenConnect " +
+                    $"({detail}). Reopen GateLink and retry so it can install " +
+                    "the one-time rule, or run scripts/install-sudoers.sh.");
+            }
+
+            throw new InvalidOperationException(detail is null
+                ? "Tunnel did not establish. Check credentials or gateway."
+                : $"Tunnel did not establish: {detail}");
         }
 
         Transition(VpnPhase.Connected);

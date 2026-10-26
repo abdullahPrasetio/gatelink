@@ -62,25 +62,48 @@ public static class SudoersSetup
         // Already authorized for this exact binary → nothing to do.
         if (IsInstalledFor(openconnect)) return true;
 
+        // The marker can be stale or absent when the rule was installed by the
+        // script or for another copy of the app. Probe first so an already
+        // authorized binary never triggers a needless admin prompt.
+        if (IsInstalled && await CanRunWithoutPasswordAsync(openconnect))
+        {
+            await WriteMarkerAsync(openconnect);
+            return true;
+        }
+
         var user = Environment.UserName;
         var killBin = File.Exists("/bin/kill") ? "/bin/kill" : "/usr/bin/kill";
 
         // The rule content (restricted to the specific openconnect + kill paths).
-        var rule =
-            $"# Installed by GateLink\\n" +
-            $"{user} ALL=(root) NOPASSWD: {openconnect}\\n" +
-            $"{user} ALL=(root) NOPASSWD: {killBin}\\n";
+        // Actual newlines + printf %s avoid printf interpreting '%' or '\' that
+        // can appear in a path.
+        static string ShQuote(string value) =>
+            "'" + value.Replace("'", "'\\''") + "'";
+
+        var ruleText =
+            "# Installed by GateLink\n" +
+            $"{user} ALL=(root) NOPASSWD: {openconnect}\n" +
+            $"{user} ALL=(root) NOPASSWD: {killBin}\n";
 
         // A shell command that writes the rule to a temp file, validates it with
-        // visudo, then installs it with correct ownership/permissions.
+        // visudo, then installs it with correct ownership/permissions. Absolute
+        // paths because `do shell script` runs with a minimal PATH. `set -e`
+        // plus the EXIT trap makes osascript report a non-zero status when
+        // visudo/install fails; previously the trailing `rm` masked it.
         var shell =
-            $"tmp=$(mktemp); printf '{rule}' > \"$tmp\"; " +
-            $"visudo -cf \"$tmp\" && install -m 0440 -o root -g wheel \"$tmp\" {SudoersPath}; " +
-            $"rm -f \"$tmp\"";
+            "set -e; tmp=$(/usr/bin/mktemp); " +
+            "trap '/bin/rm -f \"$tmp\"' EXIT; " +
+            $"printf %s {ShQuote(ruleText)} > \"$tmp\"; " +
+            $"/usr/sbin/visudo -cf \"$tmp\"; " +
+            $"/usr/bin/install -m 0440 -o root -g wheel \"$tmp\" {SudoersPath}";
 
         // Run it elevated via osascript — this shows the native admin dialog.
+        // Newlines must be escaped for AppleScript, which turns \n back into a
+        // real newline inside the shell's single-quoted argument.
         var appleScript =
-            $"do shell script \"{shell.Replace("\"", "\\\"")}\" with administrator privileges";
+            "do shell script \"" +
+            shell.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n") +
+            "\" with administrator privileges";
 
         try
         {
@@ -96,19 +119,55 @@ public static class SudoersSetup
             using var proc = Process.Start(psi)!;
             await proc.WaitForExitAsync();
 
-            if (proc.ExitCode == 0 && IsInstalled)
+            if (proc.ExitCode == 0 && IsInstalled && await CanRunWithoutPasswordAsync(openconnect))
             {
                 // Record which openconnect path we authorized, so later launches
-                // know the rule is current.
-                try
-                {
-                    Directory.CreateDirectory(Path.GetDirectoryName(MarkerPath)!);
-                    await File.WriteAllTextAsync(MarkerPath, openconnect);
-                }
-                catch { /* marker is best-effort */ }
+                // know the rule is current. Written only after a real probe, so
+                // a stale/unrelated rule can never be mistaken for success.
+                await WriteMarkerAsync(openconnect);
                 return true;
             }
             return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static async Task WriteMarkerAsync(string openconnect)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(MarkerPath)!);
+            await File.WriteAllTextAsync(MarkerPath, openconnect);
+        }
+        catch { /* marker is best-effort */ }
+    }
+
+    /// <summary>
+    /// Probes the exact binary GateLink will launch: succeeds only when the
+    /// installed sudoers rule lets this user run it without a password.
+    /// </summary>
+    private static async Task<bool> CanRunWithoutPasswordAsync(string openconnect)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("/usr/bin/sudo")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("-n");
+            psi.ArgumentList.Add(openconnect);
+            psi.ArgumentList.Add("--version");
+
+            using var proc = Process.Start(psi);
+            if (proc is null) return false;
+            await proc.WaitForExitAsync();
+            return proc.ExitCode == 0;
         }
         catch
         {

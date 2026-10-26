@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -16,6 +15,7 @@ public sealed class OpenConnectRunner : IAsyncDisposable
 {
     private readonly VpnEnvironment _env;
     private Process? _process;
+    private string? _lastTunnelFailure;
 
     public event EventHandler<string>? OutputReceived;
     public event EventHandler<int>? Exited;
@@ -23,6 +23,12 @@ public sealed class OpenConnectRunner : IAsyncDisposable
     public OpenConnectRunner(VpnEnvironment env) => _env = env;
 
     public bool IsRunning => _process is { HasExited: false };
+
+    /// <summary>
+    /// First diagnostic line emitted by the tunnel process when it fails to come
+    /// up (for example "sudo: a password is required"). Null while healthy.
+    /// </summary>
+    public string? LastTunnelFailure => _lastTunnelFailure;
 
     private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
@@ -188,6 +194,7 @@ public sealed class OpenConnectRunner : IAsyncDisposable
 
         var tunnelLog = new StringBuilder();
         var logLock = new object();
+        _lastTunnelFailure = null;
         void Capture(string line)
         {
             // stdout and stderr fire on separate threads — guard the shared
@@ -197,6 +204,7 @@ public sealed class OpenConnectRunner : IAsyncDisposable
             {
                 tunnelLog.AppendLine(line);
                 snapshot = tunnelLog.ToString();
+                NoteFailure(line);
             }
             OutputReceived?.Invoke(this, line);
             TryWriteTunnelLog(snapshot);
@@ -214,6 +222,25 @@ public sealed class OpenConnectRunner : IAsyncDisposable
         // Feed the session cookie on stdin.
         _process.StandardInput.WriteLine(cookie.Cookie);
         _process.StandardInput.Flush();
+    }
+
+    private void NoteFailure(string line)
+    {
+        if (_lastTunnelFailure is not null) return;
+
+        var text = line.Trim();
+        if (text.Length == 0) return;
+
+        if (text.Contains("sudo:", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("permission denied", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("operation not permitted", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("not found", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("cannot", StringComparison.OrdinalIgnoreCase))
+        {
+            _lastTunnelFailure = text.Length > 160 ? text[..160] : text;
+        }
     }
 
     private static void TryWriteTunnelLog(string text)
