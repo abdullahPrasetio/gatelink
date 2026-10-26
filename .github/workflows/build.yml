@@ -86,13 +86,21 @@ jobs:
           dotnet-version: '9.0.x'
       - name: Build .app bundle
         run: ./scripts/build-macos-app.sh
+      - name: Build drag-to-install DMG
+        run: ./scripts/build-macos-dmg.sh
       - name: Zip the app
         run: cd dist && zip -r GateLink-macos.zip GateLink.app
-      - name: Upload macOS artifact
+      - name: Upload macOS app (zip)
         uses: actions/upload-artifact@v4
         with:
           name: GateLink-macos
           path: dist/GateLink-macos.zip
+          if-no-files-found: error
+      - name: Upload macOS installer (dmg)
+        uses: actions/upload-artifact@v4
+        with:
+          name: GateLink-macos-dmg
+          path: dist/GateLink.dmg
           if-no-files-found: error
 
   # When a version tag (v*) is pushed, collect both builds into a GitHub Release.
@@ -113,5 +121,6 @@ jobs:
           files: |
             artifacts/GateLink-windows-setup/GateLink-Setup.exe
             artifacts/GateLink-windows-x64/GateLink-windows-x64.zip
+            artifacts/GateLink-macos-dmg/GateLink.dmg
             artifacts/GateLink-macos/GateLink-macos.zip
           generate_release_notes: true
