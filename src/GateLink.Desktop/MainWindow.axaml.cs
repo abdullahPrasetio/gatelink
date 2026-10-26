@@ -106,6 +106,8 @@ public partial class MainWindow : Window
 
     private void OnDeleteAccount(object? sender, RoutedEventArgs e) => Vm?.DeleteCurrentAccount();
 
+    private void OnInstallUpdate(object? sender, RoutedEventArgs e) => Vm?.InstallUpdate();
+
     private async void OnCheckRequirements(object? sender, RoutedEventArgs e)
     {
         if (Vm is null) return;

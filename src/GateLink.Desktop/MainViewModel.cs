@@ -67,6 +67,48 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _timer.Start();
 
         _ = LoadSavedAccountAsync();
+        _ = CheckForUpdateAsync();
+    }
+
+    // ---- auto-update ----
+
+    private ReleaseInfo? _pendingUpdate;
+
+    private bool _updateAvailable;
+    public bool UpdateAvailable { get => _updateAvailable; private set => Set(ref _updateAvailable, value); }
+
+    private string _updateText = "";
+    public string UpdateText { get => _updateText; private set => Set(ref _updateText, value); }
+
+    private async Task CheckForUpdateAsync()
+    {
+        var release = await UpdateChecker.CheckAsync();
+        if (release is { IsNewer: true })
+        {
+            _pendingUpdate = release;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                UpdateAvailable = true;
+                UpdateText = $"New update ({release.TagName})";
+            });
+        }
+    }
+
+    /// <summary>Invoked when the user clicks the "New update" label.</summary>
+    public async void InstallUpdate()
+    {
+        if (_pendingUpdate is null) return;
+        try
+        {
+            UpdateText = "Updating...";
+            await Platform.AutoUpdater.UpdateAsync(
+                _pendingUpdate,
+                msg => Dispatcher.UIThread.Post(() => UpdateText = msg));
+        }
+        catch (Exception ex)
+        {
+            UpdateText = $"Update failed: {ex.Message}";
+        }
     }
 
     /// <summary>
