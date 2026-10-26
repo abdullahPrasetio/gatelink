@@ -20,17 +20,47 @@ public static class SudoersSetup
 
     public static bool IsInstalled => File.Exists(SudoersPath);
 
+    // The sudoers file is root-only (0440) and not readable by the app, so we
+    // keep a user-readable marker recording which openconnect path was last
+    // authorized. This lets us detect a stale rule (e.g. after switching from
+    // Homebrew to the bundled binary) without needing to read the sudoers file.
+    private static string MarkerPath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "GateLink", "sudoers-authorized-path.txt");
+
     /// <summary>
-    /// Ensures the sudoers rule exists. Returns true if already present or newly
-    /// installed, false if the user cancelled or it failed. macOS only.
+    /// True only if the rule was installed for exactly this openconnect path.
+    /// </summary>
+    public static bool IsInstalledFor(string openconnectPath)
+    {
+        try
+        {
+            if (!File.Exists(SudoersPath)) return false;
+            if (!File.Exists(MarkerPath)) return false;
+            var authorized = File.ReadAllText(MarkerPath).Trim();
+            return string.Equals(authorized, openconnectPath, StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Ensures a sudoers rule exists that authorizes the CURRENT openconnect
+    /// path. Reinstalls if missing or pointing at a different binary. Returns
+    /// true if the rule is in place, false if the user cancelled or it failed.
     /// </summary>
     public static async Task<bool> EnsureInstalledAsync(VpnEnvironment env)
     {
         if (!OperatingSystem.IsMacOS()) return true;   // Windows uses elevation instead
-        if (IsInstalled) return true;
 
         var openconnect = env.OpenConnectPath;
         if (string.IsNullOrEmpty(openconnect)) return false;   // can't build a rule without it
+
+        // Already authorized for this exact binary → nothing to do.
+        if (IsInstalledFor(openconnect)) return true;
 
         var user = Environment.UserName;
         var killBin = File.Exists("/bin/kill") ? "/bin/kill" : "/usr/bin/kill";
@@ -65,7 +95,20 @@ public static class SudoersSetup
 
             using var proc = Process.Start(psi)!;
             await proc.WaitForExitAsync();
-            return proc.ExitCode == 0 && IsInstalled;
+
+            if (proc.ExitCode == 0 && IsInstalled)
+            {
+                // Record which openconnect path we authorized, so later launches
+                // know the rule is current.
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(MarkerPath)!);
+                    await File.WriteAllTextAsync(MarkerPath, openconnect);
+                }
+                catch { /* marker is best-effort */ }
+                return true;
+            }
+            return false;
         }
         catch
         {

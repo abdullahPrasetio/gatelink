@@ -444,17 +444,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // Apply the (possibly edited) gateway so openconnect targets it.
         VpnConfig.Gateway = Gateway.Trim();
 
-        // First connect on macOS: install the sudoers rule so openconnect can run
-        // as root without a password prompt. Shows the native admin dialog once;
-        // no Terminal needed. If the user cancels, tell them and stop.
-        if (OperatingSystem.IsMacOS() && !Platform.SudoersSetup.IsInstalled)
+        // On macOS, make sure sudoers authorizes the CURRENT openconnect binary
+        // (the bundled one). EnsureInstalledAsync reinstalls if the rule is
+        // missing or points at a different path — fixing the "sudo: a password
+        // is required" failure after switching to the bundled openconnect.
+        if (OperatingSystem.IsMacOS())
         {
-            StatusText = "Authorizing (one-time setup)…";
-            var ok = await Platform.SudoersSetup.EnsureInstalledAsync(new VpnEnvironment());
-            if (!ok)
+            var env = new VpnEnvironment();
+            if (!Platform.SudoersSetup.IsInstalledFor(env.OpenConnectPath ?? ""))
             {
-                StatusText = "Setup cancelled. Connect needs one-time authorization.";
-                return;
+                StatusText = "Authorizing (one-time setup)…";
+                var ok = await Platform.SudoersSetup.EnsureInstalledAsync(env);
+                if (!ok)
+                {
+                    StatusText = "Setup cancelled. Connect needs one-time authorization.";
+                    return;
+                }
             }
         }
 
