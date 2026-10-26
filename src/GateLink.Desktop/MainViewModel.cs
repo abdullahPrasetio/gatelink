@@ -70,7 +70,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             });
         _session.Log += (_, line) => System.Diagnostics.Debug.WriteLine($"[vpn] {line}");
 
-        Gateway = VpnConfig.Gateway;
+        Gateway = Platform.AppSettings.LoadGateway() ?? VpnConfig.Gateway;
         _openAtLogin = Platform.LoginItem.IsEnabled;  // reflect real state
         ButtonText = "Connect";
         VersionText = "v" + UpdateChecker.CurrentVersion.ToString(3);
@@ -481,6 +481,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
             StatusText = "Gateway must be a hostname or IPv4 address (letters, digits, dots, hyphens).";
             return;
         }
+
+        // Remember the form value for the next launch (portal only, not secrets).
+        Platform.AppSettings.SaveGateway(VpnConfig.Gateway);
 
         // On macOS the tunnel runs through a root-owned fixed-purpose helper.
         // EnsureInstalledAsync probes the existing helper first, so this does
