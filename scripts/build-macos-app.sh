@@ -24,7 +24,7 @@ VERSION="${GATELINK_VERSION:-0.0.0}"
 
 echo "Building self-contained publish for ${RID} (version ${VERSION}) ..."
 PUBLISH="$ROOT/src/GateLink.Desktop/bin/Release/net9.0/$RID/publish"
-dotnet publish "$PROJECT" -c Release -r "$RID" --self-contained true \
+dotnet publish "$PROJECT" -c Release -f net9.0 -r "$RID" --self-contained true \
   -p:PublishSingleFile=false -p:Version="$VERSION" >/dev/null
 
 echo "Assembling ${APP} ..."
@@ -33,6 +33,13 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # Copy published payload into MacOS/
 cp -R "$PUBLISH/." "$APP/Contents/MacOS/"
+
+# Privileged helper installer + wrapper. The installer copies the wrapper and
+# root-owned assets to /usr/local/libexec/gatelink when the user approves the
+# admin prompt; nothing here is executed as root directly.
+cp "$ROOT/scripts/install-tunnel-helper.sh" "$APP/Contents/Resources/install-tunnel-helper.sh"
+cp "$ROOT/scripts/gatelink-tunnel" "$APP/Contents/Resources/gatelink-tunnel"
+chmod +x "$APP/Contents/Resources/install-tunnel-helper.sh" "$APP/Contents/Resources/gatelink-tunnel"
 
 # Icon
 [ -f "$ASSETS/GateLink.icns" ] && cp "$ASSETS/GateLink.icns" "$APP/Contents/Resources/GateLink.icns"

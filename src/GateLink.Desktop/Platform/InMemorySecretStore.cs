@@ -3,7 +3,7 @@ using GateLink.Core.Vault;
 namespace GateLink.Desktop.Platform;
 
 /// <summary>
-/// Non-persistent store for development. Real builds use KeychainSecretStore
+/// Non-persistent store for development. Real builds use EncryptedFileSecretStore
 /// (macOS) or DpapiSecretStore (Windows) so secrets are encrypted at rest.
 /// </summary>
 public sealed class InMemorySecretStore : ISecretStore

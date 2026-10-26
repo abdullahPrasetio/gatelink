@@ -1,0 +1,227 @@
+#!/bin/bash
+#
+# gatelink-tunnel — root-owned privileged helper for GateLink.
+#
+# Installed at /usr/local/libexec/gatelink/gatelink-tunnel by
+# install-tunnel-helper.sh. It is the ONLY command GateLink may run through
+# sudo. It accepts a fixed command set and builds the openconnect argv itself,
+# so a caller can never inject --script, --csd-wrapper, --config, a pid file,
+# or any other option into the root process.
+#
+# The host is whatever the app form supplied; the wrapper validates it as a
+# DNS name/IP and never accepts options, paths, or a script from the caller.
+#
+# Callers:
+#   gatelink-tunnel connect --host <host> --fingerprint <pin>
+#   gatelink-tunnel stop
+#   gatelink-tunnel status
+#   gatelink-tunnel version
+#
+set -euo pipefail
+
+# sudo strips the caller's environment, so these overrides are only usable when
+# the script is run directly for testing. They cannot be passed through sudo.
+BASE="${GATELINK_HELPER_BASE:-/usr/local/libexec/gatelink}"
+PIDFILE="${GATELINK_TUNNEL_PIDFILE:-/var/run/gatelink.pid}"
+
+OC="${BASE}/openconnect"
+VPNC_SCRIPT="${BASE}/vpnc-script"
+HIP_SCRIPT="${BASE}/hipreport.sh"
+VERSION_FILE="${BASE}/VERSION"
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+umask 022
+
+die() {
+    echo "gatelink-tunnel: $*" >&2
+    exit 64
+}
+
+require_root() {
+    [[ "${EUID}" -eq 0 ]] && return 0
+    # Test-only escape hatch. sudo strips this variable, so an unprivileged
+    # caller can only run the wrapper as themselves — never as root.
+    [[ "${GATELINK_TEST_NONROOT:-0}" == "1" ]] && return 0
+    die "must be run as root"
+}
+
+valid_host() {
+    local host="${1:-}"
+    [[ -n "${host}" && "${#host}" -le 253 ]] || return 1
+    [[ "${host}" != -* ]] || return 1
+    [[ "${host}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || return 1
+    return 0
+}
+
+valid_fingerprint() {
+    local fp="${1:-}"
+    [[ -n "${fp}" && "${#fp}" -le 200 ]] || return 1
+    [[ "${fp}" != -* ]] || return 1
+    [[ "${fp}" =~ ^[A-Za-z0-9:._+/=-]+$ ]] || return 1
+    return 0
+}
+
+read_pid() {
+    [[ -f "${PIDFILE}" ]] || return 1
+    local pid
+    pid="$(/bin/cat "${PIDFILE}" 2>/dev/null | /usr/bin/tr -d '[:space:]')"
+    [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+    (( pid > 1 )) || return 1
+    printf '%s' "${pid}"
+}
+
+pid_is_tunnel() {
+    local pid="${1:-}"
+    local cmd
+    cmd="$(/bin/ps -p "${pid}" -o command= 2>/dev/null || true)"
+    [[ "${cmd}" == "${OC}" || "${cmd}" == "${OC} "* ]]
+}
+
+ensure_not_running() {
+    local pid
+    if pid="$(read_pid)" && /bin/kill -0 "${pid}" 2>/dev/null; then
+        die "a tunnel is already running (pid ${pid})"
+    fi
+    if /usr/bin/pgrep -f "^${OC}( |$)" >/dev/null 2>&1; then
+        die "a tunnel is already running (pid file missing)"
+    fi
+}
+
+cmd_connect() {
+    require_root
+
+    local host="" fingerprint=""
+    while (( $# )); do
+        case "${1}" in
+            --host)
+                [[ $# -ge 2 ]] || die "--host requires a value"
+                host="${2}"
+                shift 2
+                ;;
+            --fingerprint)
+                [[ $# -ge 2 ]] || die "--fingerprint requires a value"
+                fingerprint="${2}"
+                shift 2
+                ;;
+            *)
+                die "unknown argument: ${1}"
+                ;;
+        esac
+    done
+
+    valid_host "${host}" || die "invalid gateway host"
+    valid_fingerprint "${fingerprint}" || die "invalid certificate fingerprint"
+    [[ -x "${OC}" ]] || die "openconnect missing"
+    [[ -x "${VPNC_SCRIPT}" ]] || die "vpnc-script missing"
+    ensure_not_running
+
+    local args=(
+        "--protocol=gp"
+        "--usergroup=gateway"
+        "--cookie-on-stdin"
+        "--servercert=${fingerprint}"
+        "--reconnect-timeout=300"
+        "--force-dpd=30"
+        "--no-dtls"
+        "--script=${VPNC_SCRIPT}"
+        "--pid-file=${PIDFILE}"
+    )
+    if [[ -x "${HIP_SCRIPT}" ]]; then
+        args+=("--csd-wrapper=${HIP_SCRIPT}")
+    fi
+    args+=("${host}")
+
+    # stdin carries the WebVPN cookie from the unprivileged app. The wrapper
+    # never reads it, so openconnect receives it directly.
+    exec "${OC}" "${args[@]}"
+}
+
+stop_pid() {
+    local pid="${1:-}"
+    [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+    (( pid > 1 )) || return 1
+
+    /bin/kill -TERM "${pid}" 2>/dev/null || true
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        /bin/kill -0 "${pid}" 2>/dev/null || return 0
+        /bin/sleep 0.2
+    done
+    /bin/kill -KILL "${pid}" 2>/dev/null || true
+    return 0
+}
+
+find_tunnel_pids() {
+    # The pid file can disappear while openconnect is still alive (reconnect /
+    # failed stop). Fall back to the exact root-owned binary path.
+    /usr/bin/pgrep -f "^${OC}( |$)" 2>/dev/null || true
+}
+
+cmd_stop() {
+    require_root
+    local pid found=0 p
+
+    if pid="$(read_pid)" && pid_is_tunnel "${pid}"; then
+        stop_pid "${pid}"
+        /bin/rm -f "${PIDFILE}"
+        return 0
+    fi
+
+    for p in $(find_tunnel_pids); do
+        if pid_is_tunnel "${p}"; then
+            stop_pid "${p}"
+            found=1
+        fi
+    done
+    /bin/rm -f "${PIDFILE}"
+    (( found )) || return 0
+}
+
+cmd_status() {
+    require_root
+    local pid p
+
+    if pid="$(read_pid)" && /bin/kill -0 "${pid}" 2>/dev/null && pid_is_tunnel "${pid}"; then
+        printf '%s\n' "${pid}"
+        exit 0
+    fi
+
+    for p in $(find_tunnel_pids); do
+        if pid_is_tunnel "${p}"; then
+            printf '%s\n' "${p}"
+            exit 0
+        fi
+    done
+    exit 1
+}
+
+cmd_version() {
+    [[ -f "${VERSION_FILE}" ]] || die "version file missing"
+    /bin/cat "${VERSION_FILE}"
+}
+
+case "${1:-}" in
+    connect)
+        shift
+        cmd_connect "$@"
+        ;;
+    stop)
+        shift
+        [[ $# -eq 0 ]] || die "stop takes no arguments"
+        cmd_stop
+        ;;
+    status)
+        shift
+        [[ $# -eq 0 ]] || die "status takes no arguments"
+        cmd_status
+        ;;
+    version)
+        shift
+        [[ $# -eq 0 ]] || die "version takes no arguments"
+        cmd_version
+        ;;
+    *)
+        die "usage: gatelink-tunnel connect --host <host> --fingerprint <pin> | stop | status | version"
+        ;;
+esac

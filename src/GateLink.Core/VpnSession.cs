@@ -1,3 +1,4 @@
+using GateLink.Core.Otp;
 using GateLink.Core.Vault;
 
 namespace GateLink.Core;
@@ -60,7 +61,7 @@ public sealed class VpnSession : IAsyncDisposable
         {
             if (!File.Exists(_env.PidPath)) return;
             var pidText = File.ReadAllText(_env.PidPath).Trim();
-            if (!int.TryParse(pidText, out var pid) || pid <= 0) return;
+            if (!TunnelArgs.TryParseTunnelPid(pidText, out var pid)) return;
 
             if (IsProcessAlive(pid))
             {
@@ -94,7 +95,7 @@ public sealed class VpnSession : IAsyncDisposable
         {
             if (!File.Exists(_env.PidPath)) return false;
             var txt = File.ReadAllText(_env.PidPath).Trim();
-            return int.TryParse(txt, out var pid) && pid > 0 && IsProcessAlive(pid);
+            return TunnelArgs.TryParseTunnelPid(txt, out var pid) && IsProcessAlive(pid);
         }
         catch { return false; }
     }
@@ -109,14 +110,16 @@ public sealed class VpnSession : IAsyncDisposable
     public async Task ConnectWithVaultAsync(OtpVault vault, VaultEntry entry, CancellationToken ct = default)
     {
         // A single unlock gate guards access to both the password and the OTP.
-        if (!await vault.EnsureUnlockedAsync($"Connect to {Gateway}", ct))
-            throw new InvalidOperationException("Unlock cancelled. VPN not connected.");
+        // The store may return metadata only; LoadSecretAsync fetches the
+        // protected seed/password after the gate has unlocked the vault.
+        var secret = await vault.LoadSecretAsync(entry, ct)
+                     ?? throw new InvalidOperationException("Unlock cancelled. VPN not connected.");
 
         var username = entry.VpnUsername
                        ?? throw new InvalidOperationException("No VPN username stored for this account.");
-        var password = entry.VpnPassword
-                       ?? throw new InvalidOperationException("No VPN password stored for this account.");
-        var otp = entry.CreateGenerator().Generate();
+        var password = secret.VpnPassword
+                       ?? throw new InvalidOperationException("No VPN password stored for this account. Enter it and retry.");
+        var otp = TotpGenerator.FromBase32(secret.Secret, entry.Digits, entry.Period, entry.Algorithm).Generate();
 
         await ConnectAsync(username, password, otp, ct);
     }
@@ -134,44 +137,82 @@ public sealed class VpnSession : IAsyncDisposable
                 "openconnect not found. Install OpenConnect for Windows and ensure it is on PATH.");
         }
 
-        _lastUser = username;
-        ReconnectAttempts = 0;
-
-        Transition(VpnPhase.Authenticating);
-        _lastCookie = await _auth.AuthenticateAsync(username, password, otp, ct);
-
-        Transition(VpnPhase.Connecting);
-        _runner.StartTunnel(_lastCookie);
-
-        // Wait until openconnect reports the tunnel is actually established,
-        // instead of flipping to Connected the instant the process launches
-        // (which caused a Connected→Reconnecting flicker). We watch its output
-        // for the "Configured as <ip>" line, with a timeout fallback.
-        var established = await WaitForTunnelEstablishedAsync(ct);
-        if (!established)
+        if (!TunnelArgs.IsValidHost(VpnConfig.Gateway))
         {
-            var detail = _runner.LastTunnelFailure;
-            await _runner.StopAsync();
             Transition(VpnPhase.Failed);
-
-            // A missing sudoers rule is the most common macOS failure. It used
-            // to surface as "check credentials" even though login had already
-            // succeeded, so call it out explicitly and actionably.
-            if (detail?.StartsWith("sudo:", StringComparison.OrdinalIgnoreCase) == true)
-            {
-                throw new InvalidOperationException(
-                    "Root authorization missing for the bundled OpenConnect " +
-                    $"({detail}). Reopen GateLink and retry so it can install " +
-                    "the one-time rule, or run scripts/install-sudoers.sh.");
-            }
-
-            throw new InvalidOperationException(detail is null
-                ? "Tunnel did not establish. Check credentials or gateway."
-                : $"Tunnel did not establish: {detail}");
+            throw new InvalidOperationException(
+                "Enter a valid gateway hostname (letters, digits, dots and hyphens only).");
         }
 
-        Transition(VpnPhase.Connected);
-        StartHealthMonitor();
+        if (!OperatingSystem.IsWindows() && !File.Exists(_env.TunnelHelperPath))
+        {
+            Transition(VpnPhase.Failed);
+            throw new InvalidOperationException(
+                "The root tunnel helper is not installed. Run scripts/install-tunnel-helper.sh once, then retry.");
+        }
+
+        try
+        {
+            _lastUser = username;
+            ReconnectAttempts = 0;
+
+            Transition(VpnPhase.Authenticating);
+            _lastCookie = await _auth.AuthenticateAsync(username, password, otp, ct);
+
+            Transition(VpnPhase.Connecting);
+
+            // Subscribe BEFORE starting the process: openconnect can print
+            // "Configured as <ip>" immediately, and the old order attached the
+            // output handler after StartTunnel, so the line was missed and the UI
+            // stayed on "Connecting…" until the 30s timeout.
+            using var startCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var establishedTask = WaitForTunnelEstablishedAsync(startCts.Token);
+            try
+            {
+                _runner.StartTunnel(_lastCookie);
+            }
+            catch
+            {
+                startCts.Cancel();
+                throw;
+            }
+
+            // Wait until openconnect reports the tunnel is actually established,
+            // with a timeout fallback.
+            var established = await establishedTask;
+            if (!established)
+            {
+                var detail = _runner.LastTunnelFailure;
+                await _runner.StopAsync();
+                Transition(VpnPhase.Failed);
+
+                // A missing/stale root helper is the most common macOS failure. It
+                // used to surface as "check credentials" even though login had
+                // already succeeded, so call it out explicitly and actionably.
+                if (detail?.StartsWith("sudo:", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    throw new InvalidOperationException(
+                        "Root tunnel helper missing or not authorized " +
+                        $"({detail}). Run scripts/install-tunnel-helper.sh once, " +
+                        "or press Connect and approve the admin prompt.");
+                }
+
+                throw new InvalidOperationException(detail is null
+                    ? "Tunnel did not establish. Check credentials or gateway."
+                    : $"Tunnel did not establish: {detail}");
+            }
+
+            Transition(VpnPhase.Connected);
+            StartHealthMonitor();
+        }
+        catch
+        {
+            // Any auth/tunnel failure must clear the spinner; otherwise the
+            // UI stays at "Authenticating…/Connecting…" with no process left.
+            try { await _runner.StopAsync(); } catch { /* best effort */ }
+            if (Phase != VpnPhase.Failed) Transition(VpnPhase.Failed);
+            throw;
+        }
     }
 
     /// <summary>

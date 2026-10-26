@@ -35,21 +35,39 @@ public sealed class OpenConnectRunner : IAsyncDisposable
     /// <summary>
     /// Builds the start info for the privileged tunnel process. On Windows the
     /// executable is launched directly (elevation comes from running the app as
-    /// administrator / a service). On macOS/Linux it is wrapped in
-    /// <c>sudo -n</c> so a NOPASSWD sudoers rule can grant root without a prompt.
+    /// administrator / a service). On macOS it invokes the root-owned
+    /// fixed-purpose helper; the helper builds the openconnect argv itself, so
+    /// the app can never inject script paths or arbitrary options.
     /// </summary>
-    private static ProcessStartInfo BuildTunnelStartInfo(string openConnectPath)
+    private ProcessStartInfo BuildTunnelStartInfo(GpCookie cookie)
     {
         ProcessStartInfo psi;
         if (IsWindows)
         {
-            psi = new ProcessStartInfo(openConnectPath);
+            var exe = _env.OpenConnectPath
+                      ?? throw new InvalidOperationException("openconnect not found.");
+
+            psi = new ProcessStartInfo(exe);
+            psi.ArgumentList.Add($"--protocol={VpnConfig.Protocol}");
+            psi.ArgumentList.Add("--usergroup=gateway");
+            psi.ArgumentList.Add("--cookie-on-stdin");
+            psi.ArgumentList.Add($"--servercert={cookie.Fingerprint}");
+            psi.ArgumentList.Add("--reconnect-timeout=300");
+            psi.ArgumentList.Add("--force-dpd=30");
+            psi.ArgumentList.Add("--no-dtls");
+            psi.ArgumentList.Add($"--pid-file={_env.PidPath}");
+            psi.ArgumentList.Add(cookie.Host);
         }
         else
         {
             psi = new ProcessStartInfo("/usr/bin/sudo");
             psi.ArgumentList.Add("-n");               // never prompt for a password
-            psi.ArgumentList.Add(openConnectPath);
+            psi.ArgumentList.Add(_env.TunnelHelperPath);
+            psi.ArgumentList.Add("connect");
+            psi.ArgumentList.Add("--host");
+            psi.ArgumentList.Add(cookie.Host);
+            psi.ArgumentList.Add("--fingerprint");
+            psi.ArgumentList.Add(cookie.Fingerprint!);
         }
 
         psi.RedirectStandardInput = true;
@@ -121,7 +139,19 @@ public sealed class OpenConnectRunner : IAsyncDisposable
         await proc.StandardInput.FlushAsync(ct);
         proc.StandardInput.Close();
 
-        await proc.WaitForExitAsync(ct);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+        try
+        {
+            await proc.WaitForExitAsync(linked.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { /* already gone */ }
+            if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
+            throw new InvalidOperationException(
+                "Login timed out after 90 seconds. Check the gateway and try again.");
+        }
 
         if (proc.ExitCode != 0)
         {
@@ -161,36 +191,22 @@ public sealed class OpenConnectRunner : IAsyncDisposable
         if (IsRunning)
             throw new InvalidOperationException("A tunnel is already running.");
 
-        var exe = _env.OpenConnectPath
-                  ?? throw new InvalidOperationException("openconnect not found.");
+        // Values from the authenticated gateway cross the root boundary. Never
+        // let them become options or paths: validate here and again in the
+        // root-owned helper.
+        if (!TunnelArgs.IsValidHost(cookie.Host))
+            throw new InvalidOperationException(
+                "The gateway returned an invalid tunnel host; refusing to start.");
+        if (!TunnelArgs.IsValidFingerprint(cookie.Fingerprint))
+            throw new InvalidOperationException(
+                "The gateway did not return a valid certificate fingerprint; refusing to start.");
 
         // The tunnel phase must create a virtual interface (utun/tun), which
-        // requires root. On macOS/Linux we invoke openconnect through `sudo -n`
-        // (non-interactive): it succeeds only if a NOPASSWD sudoers rule for
-        // openconnect is installed (see scripts/install-sudoers.sh). `-n` means
-        // we never block on a password prompt; if the rule is missing, sudo
-        // fails fast and the error surfaces to the UI.
-        // Argument set mirrors the reference helper (from analysis):
-        //   --protocol=gp --usergroup=gateway --cookie-on-stdin --servercert <fp>
-        //   --reconnect-timeout=300 --force-dpd=30 --no-dtls --pid-file <pid> <host>
-        // We keep it running in the foreground (no --background) so we can stream
-        // output and detect exit.
-        var psi = BuildTunnelStartInfo(exe);
-        psi.ArgumentList.Add($"--protocol={VpnConfig.Protocol}");
-        psi.ArgumentList.Add("--usergroup=gateway");
-        psi.ArgumentList.Add("--cookie-on-stdin");
-        if (!string.IsNullOrEmpty(cookie.Fingerprint))
-            psi.ArgumentList.Add($"--servercert={cookie.Fingerprint}");
-        psi.ArgumentList.Add("--reconnect-timeout=300");
-        psi.ArgumentList.Add("--force-dpd=30");
-        psi.ArgumentList.Add("--no-dtls");
-        // Submit a HIP report if the gateway requires it (GlobalProtect Host
-        // Integrity Protection). Without this the tunnel connects but the server
-        // may quarantine/limit it.
-        if (!string.IsNullOrEmpty(_env.HipReportScriptPath))
-            psi.ArgumentList.Add($"--csd-wrapper={_env.HipReportScriptPath}");
-        psi.ArgumentList.Add($"--pid-file={_env.PidPath}");
-        psi.ArgumentList.Add(cookie.Host);
+        // requires root. On macOS we invoke the root-owned helper through
+        // `sudo -n`; it is the only command authorized by sudoers. The helper
+        // adds --script, --csd-wrapper, --pid-file and all other options from
+        // root-owned files, so nothing user-writable is executed as root.
+        var psi = BuildTunnelStartInfo(cookie);
 
         var tunnelLog = new StringBuilder();
         var logLock = new object();
@@ -248,20 +264,21 @@ public sealed class OpenConnectRunner : IAsyncDisposable
         try
         {
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            File.WriteAllText(Path.Combine(home, "gatelink-tunnel.log"),
-                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}]\n{text}\n");
+            var path = Path.Combine(home, "gatelink-tunnel.log");
+            File.WriteAllText(path, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}]\n{text}\n");
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
         catch { /* best-effort diagnostics */ }
     }
 
     public async Task StopAsync()
     {
-        // On Unix the tunnel runs as root (via sudo), so the child openconnect
-        // can't be killed by this unprivileged process directly. Terminate it
-        // via its pid file using `sudo -n kill`, which the same NOPASSWD rule
-        // can permit. Then clean up the local sudo wrapper process.
+        // On Unix the tunnel runs as root, so the child openconnect can't be
+        // killed by this unprivileged process directly. The root-owned helper
+        // verifies the pid belongs to its own openconnect before signalling it.
         if (!IsWindows)
-            await StopViaPidFileAsync();
+            await StopViaHelperAsync();
 
         if (_process is null || _process.HasExited) return;
         try
@@ -269,31 +286,27 @@ public sealed class OpenConnectRunner : IAsyncDisposable
             _process.Kill(entireProcessTree: true);
             await _process.WaitForExitAsync();
         }
-        catch (InvalidOperationException)
+        catch (Exception)
         {
-            // Process already gone.
+            // The helper already stopped the root child; sudo may have exited.
         }
     }
 
-    private async Task StopViaPidFileAsync()
+    private async Task StopViaHelperAsync()
     {
         try
         {
-            if (!File.Exists(_env.PidPath)) return;
-            var pidText = (await File.ReadAllTextAsync(_env.PidPath)).Trim();
-            if (string.IsNullOrEmpty(pidText)) return;
-
             var psi = new ProcessStartInfo("/usr/bin/sudo")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
             psi.ArgumentList.Add("-n");
-            psi.ArgumentList.Add("/bin/kill");
-            psi.ArgumentList.Add(pidText);
+            psi.ArgumentList.Add(_env.TunnelHelperPath);
+            psi.ArgumentList.Add("stop");
 
-            using var kill = Process.Start(psi);
-            if (kill is not null) await kill.WaitForExitAsync();
+            using var stop = Process.Start(psi);
+            if (stop is not null) await stop.WaitForExitAsync();
         }
         catch
         {

@@ -10,7 +10,7 @@ namespace GateLink.Core.Tests;
 public class QrDecoderTests
 {
     private const string SampleUri =
-        "otpauth://totp/BRI%20VPN:alice?secret=JBSWY3DPEHPK3PXP&issuer=BRI%20VPN&digits=6&period=30&algorithm=SHA1";
+        "otpauth://totp/Example%20VPN:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example%20VPN&digits=6&period=30&algorithm=SHA1";
 
     /// <summary>Renders text into a QR PNG using ZXing + SkiaSharp.</summary>
     private static byte[] MakeQrPng(string text, int size = 300)
@@ -66,7 +66,7 @@ public class QrDecoderTests
             File.WriteAllBytes(path, png);
             var descriptor = QrDecoder.DecodeOtpAuthFile(path);
             Assert.Equal("alice", descriptor.Account);
-            Assert.Equal("BRI VPN", descriptor.Issuer);
+            Assert.Equal("Example VPN", descriptor.Issuer);
         }
         finally
         {

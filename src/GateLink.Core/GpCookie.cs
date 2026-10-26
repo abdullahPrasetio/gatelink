@@ -58,7 +58,7 @@ public sealed record GpCookie
         static string? Unquote(string? v)
         {
             if (string.IsNullOrEmpty(v)) return v;
-            // openconnect prints shell-style values, e.g. HOST='103.63.96.190'.
+            // openconnect prints shell-style values, e.g. HOST='203.0.113.10'.
             // Strip a single pair of surrounding single or double quotes.
             if (v.Length >= 2 &&
                 ((v[0] == '\'' && v[^1] == '\'') || (v[0] == '"' && v[^1] == '"')))

@@ -44,14 +44,25 @@ public sealed class VpnEnvironment
 
     public string RuntimeDirectory { get; }
     public string LogPath { get; }
+
+    /// <summary>
+    /// PID written by the root-owned tunnel helper. The app only reads it for
+    /// "adopt existing tunnel" / health checks; it never writes it.
+    /// </summary>
     public string PidPath { get; }
 
     /// <summary>
-    /// Path to the HIP report script passed to openconnect via --csd-wrapper,
-    /// or null if not available. GlobalProtect gateways that enforce Host
-    /// Integrity Protection reject/limit the tunnel without it.
+    /// Path to the HIP report script shipped with the app. The root-owned helper
+    /// installer copies it to a protected location; the app never executes the
+    /// user-writable copy as root.
     /// </summary>
     public string? HipReportScriptPath { get; }
+
+    /// <summary>
+    /// Root-owned fixed-purpose helper installed by install-tunnel-helper.sh.
+    /// macOS only; Windows runs openconnect under the app's elevation.
+    /// </summary>
+    public string TunnelHelperPath => "/usr/local/libexec/gatelink/gatelink-tunnel";
 
     public VpnEnvironment()
     {
@@ -59,14 +70,15 @@ public sealed class VpnEnvironment
         Directory.CreateDirectory(RuntimeDirectory);
 
         LogPath = Path.Combine(RuntimeDirectory, "openconnect.log");
-        PidPath = Path.Combine(RuntimeDirectory, "openconnect.pid");
+        PidPath = IsWindows
+            ? Path.Combine(RuntimeDirectory, "openconnect.pid")
+            : "/var/run/gatelink.pid";
         HipReportScriptPath = ResolveHipReportScript();
     }
 
     /// <summary>
-    /// Finds the bundled hipreport.sh and copies it into the runtime directory
-    /// with executable permissions, so openconnect can run it. Looks next to the
-    /// executable (app bundle Assets) and in common locations.
+    /// Locates the bundled hipreport.sh without copying it into a user-writable
+    /// directory. The helper installer copies it to a root-owned location.
     /// </summary>
     private string? ResolveHipReportScript()
     {
@@ -82,35 +94,13 @@ public sealed class VpnEnvironment
             };
 
             foreach (var src in candidates)
-            {
-                if (!File.Exists(src)) continue;
-                var dst = Path.Combine(RuntimeDirectory, "hipreport.sh");
-                File.Copy(src, dst, overwrite: true);
-                MakeExecutable(dst);
-                return dst;
-            }
+                if (File.Exists(src)) return src;
         }
         catch
         {
             // fall through: no HIP wrapper available
         }
         return null;
-    }
-
-    private static void MakeExecutable(string path)
-    {
-        try
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo("/bin/chmod")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            psi.ArgumentList.Add("+x");
-            psi.ArgumentList.Add(path);
-            System.Diagnostics.Process.Start(psi)?.WaitForExit();
-        }
-        catch { /* best effort */ }
     }
 
     /// <summary>

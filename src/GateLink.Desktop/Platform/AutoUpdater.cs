@@ -1,13 +1,18 @@
 using System.Diagnostics;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using GateLink.Core;
 
 namespace GateLink.Desktop.Platform;
 
 /// <summary>
-/// Downloads a new release and replaces the running app bundle. macOS-specific:
-/// downloads the DMG, mounts it, copies the new .app over the running one, then
-/// unmounts and relaunches. On failure, the old app remains untouched.
+/// Downloads a signed release and replaces the running app bundle.
+///
+/// macOS: the DMG must have a matching GateLink.dmg.sig asset signed by the
+/// pinned key in <see cref="ReleaseSignature"/>. The signature is verified over
+/// the downloaded bytes before the DMG is mounted. A compromised release or
+/// tampered update is refused; the user can still download it manually.
 /// </summary>
 public static class AutoUpdater
 {
@@ -19,8 +24,8 @@ public static class AutoUpdater
         if (OperatingSystem.IsMacOS())
             return await UpdateMacAsync(release, onProgress, ct);
 
-        // Windows: for now, open the browser to the release page. Full
-        // self-update on Windows needs replacing a running .exe (harder).
+        // Windows: open the release page. Full self-update needs replacing a
+        // running .exe and an Authenticode-signed installer.
         if (!string.IsNullOrEmpty(release.HtmlUrl))
             OpenBrowser(release.HtmlUrl);
         return "Opened download page. Install manually.";
@@ -32,46 +37,60 @@ public static class AutoUpdater
         CancellationToken ct)
     {
         var url = release.MacAssetUrl;
-        if (string.IsNullOrEmpty(url))
+        var signatureUrl = release.MacSignatureUrl;
+        if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(signatureUrl))
         {
-            // Fallback: open browser to the release page.
             if (!string.IsNullOrEmpty(release.HtmlUrl)) OpenBrowser(release.HtmlUrl);
-            return "No DMG found in release. Opened download page.";
+            return "This release is not signed for auto-update. Opened the download page.";
         }
 
-        // 1. Download DMG to a temp location.
         progress?.Invoke("Downloading update...");
-        var tmp = Path.Combine(Path.GetTempPath(), "GateLink-update.dmg");
-        using (var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) })
+        var tempDir = Directory.CreateTempSubdirectory("gatelink-update-");
+        var dmgPath = Path.Combine(tempDir.FullName, "GateLink.dmg");
+
+        byte[] hash;
+        try
         {
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("GateLink-Updater/1.0");
-            await using var stream = await http.GetStreamAsync(url, ct);
-            await using var file = File.Create(tmp);
-            await stream.CopyToAsync(file, ct);
+            hash = await DownloadAndHashAsync(url, dmgPath, ct);
+
+            progress?.Invoke("Verifying update...");
+            var signature = await DownloadBytesAsync(signatureUrl, ct);
+            if (!ReleaseSignature.Verify(hash, signature))
+                throw new InvalidOperationException(
+                    "Update signature is missing or invalid; refusing to install. Download it manually from the release page.");
+        }
+        catch
+        {
+            TryDeleteDirectory(tempDir.FullName);
+            throw;
         }
 
         var currentApp = ResolveCurrentAppBundle();
         if (currentApp is null)
         {
             // Not running from a bundle (e.g. dotnet run) — just open the DMG.
-            await RunAsync("/usr/bin/open", $"\"{tmp}\"", ct);
+            await RunAsync("/usr/bin/open", $"\"{dmgPath}\"", ct);
             return "Opened the update DMG. Drag GateLink into Applications.";
         }
 
-        // Replacing a running .app from inside itself is unreliable (the bundle
-        // is in use). Instead we hand off to a detached shell script that waits
-        // for this process to quit, swaps the bundle, and relaunches. Then we
-        // quit immediately.
         progress?.Invoke("Installing update...");
 
         var pid = Environment.ProcessId;
-        var script = Path.Combine(Path.GetTempPath(), "gatelink-update.sh");
+        var script = Path.Combine(tempDir.FullName, "update.sh");
         var scriptBody = $$"""
             #!/bin/bash
             set -e
-            DMG="{{tmp}}"
-            APP="{{currentApp}}"
+            DMG={{ShQuote(dmgPath)}}
+            APP={{ShQuote(currentApp)}}
             PID={{pid}}
+            SCRIPT={{ShQuote(script)}}
+            TMP={{ShQuote(tempDir.FullName)}}
+            MP=""
+
+            cleanup() {
+              if [ -n "$MP" ]; then hdiutil detach "$MP" >/dev/null 2>&1 || true; fi
+            }
+            trap cleanup EXIT
 
             # 1. Wait for GateLink to quit (max ~15s).
             for i in $(seq 1 60); do
@@ -79,26 +98,39 @@ public static class AutoUpdater
               sleep 0.25
             done
 
-            # 2. Mount, copy the new app over the old, unmount.
+            # 2. Mount the verified DMG and find the new app.
             MP=$(hdiutil attach "$DMG" -nobrowse -readonly | grep -o '/Volumes/.*' | tail -1)
+            if [ -z "$MP" ]; then exit 1; fi
             NEW=$(ls -d "$MP"/*.app 2>/dev/null | head -1)
-            if [ -n "$NEW" ]; then
-              rm -rf "$APP.bak"
-              mv "$APP" "$APP.bak" 2>/dev/null || true
-              cp -R "$NEW" "$APP"
-              rm -rf "$APP.bak"
-            fi
-            hdiutil detach "$MP" >/dev/null 2>&1 || true
-            rm -f "$DMG"
+            if [ -z "$NEW" ]; then exit 1; fi
 
-            # 3. Relaunch.
+            BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$NEW/Contents/Info.plist" 2>/dev/null || true)
+            if [ "$BUNDLE_ID" != "com.gatelink.app" ]; then exit 1; fi
+            if ! codesign --verify --deep "$NEW" >/dev/null 2>&1; then exit 1; fi
+
+            # 3. Swap with rollback.
+            rm -rf "$APP.bak"
+            mv "$APP" "$APP.bak"
+            if ! cp -R "$NEW" "$APP"; then
+              rm -rf "$APP"
+              mv "$APP.bak" "$APP"
+              exit 1
+            fi
+            rm -rf "$APP.bak"
+
+            # 4. Relaunch and clean up.
+            hdiutil detach "$MP" >/dev/null 2>&1 || true
+            MP=""
+            rm -f "$DMG"
             open "$APP"
-            rm -f "{{script}}"
+            rm -f "$SCRIPT"
+            rmdir "$TMP" >/dev/null 2>&1 || true
             """;
+
         await File.WriteAllTextAsync(script, scriptBody, ct);
         await RunAsync("/bin/chmod", $"+x \"{script}\"", ct);
 
-        // Launch the updater detached so it survives this process exiting.
+        // Launch detached so it survives this process exiting.
         Process.Start(new ProcessStartInfo("/bin/bash")
         {
             ArgumentList = { script },
@@ -111,11 +143,41 @@ public static class AutoUpdater
         return "Updating...";
     }
 
+    private static async Task<byte[]> DownloadAndHashAsync(
+        string url,
+        string destination,
+        CancellationToken ct)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("GateLink-Updater/2.0");
+
+        await using var stream = await http.GetStreamAsync(url, ct);
+        await using var file = File.Create(destination);
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[81920];
+        int read;
+        while ((read = await stream.ReadAsync(buffer, ct)) > 0)
+        {
+            await file.WriteAsync(buffer.AsMemory(0, read), ct);
+            hash.AppendData(buffer, 0, read);
+        }
+        return hash.GetHashAndReset();
+    }
+
+    private static async Task<byte[]> DownloadBytesAsync(string url, CancellationToken ct)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(1) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("GateLink-Updater/2.0");
+        return await http.GetByteArrayAsync(url, ct);
+    }
+
     private static string? ResolveCurrentAppBundle()
     {
         var exe = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
         if (string.IsNullOrEmpty(exe)) return null;
-        // .../GateLink.app/Contents/MacOS/GateLink  →  .../GateLink.app
+
+        // .../GateLink.app/Contents/MacOS/GateLink  ->  .../GateLink.app
         var idx = exe.IndexOf(".app/", StringComparison.Ordinal);
         return idx < 0 ? null : exe[..(idx + 4)];
     }
@@ -145,4 +207,11 @@ public static class AutoUpdater
         }
         catch { /* ignore */ }
     }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try { Directory.Delete(path, recursive: true); } catch { /* best effort */ }
+    }
+
+    private static string ShQuote(string value) => "'" + value.Replace("'", "'\\''") + "'";
 }

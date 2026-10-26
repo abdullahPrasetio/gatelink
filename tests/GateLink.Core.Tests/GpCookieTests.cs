@@ -10,19 +10,19 @@ public class GpCookieTests
     {
         var output = """
             COOKIE=authcookie=abc123def456
-            HOST=vpn.bri.co.id
-            CONNECT_URL=https://vpn.bri.co.id/ssl-tunnel-connect.sslvpn
+            HOST=vpn.example.com
+            CONNECT_URL=https://vpn.example.com/ssl-tunnel-connect.sslvpn
             FINGERPRINT=sha256:aa:bb:cc:dd
-            RESOLVE=vpn.bri.co.id:10.0.0.1
+            RESOLVE=vpn.example.com:10.0.0.1
             """;
 
         var cookie = GpCookie.Parse(output);
 
         Assert.Equal("authcookie=abc123def456", cookie.Cookie);
-        Assert.Equal("vpn.bri.co.id", cookie.Host);
-        Assert.Equal("https://vpn.bri.co.id/ssl-tunnel-connect.sslvpn", cookie.ConnectUrl);
+        Assert.Equal("vpn.example.com", cookie.Host);
+        Assert.Equal("https://vpn.example.com/ssl-tunnel-connect.sslvpn", cookie.ConnectUrl);
         Assert.Equal("sha256:aa:bb:cc:dd", cookie.Fingerprint);
-        Assert.Equal("vpn.bri.co.id:10.0.0.1", cookie.Resolve);
+        Assert.Equal("vpn.example.com:10.0.0.1", cookie.Resolve);
     }
 
     [Fact]
@@ -53,17 +53,17 @@ public class GpCookieTests
         // openconnect prints values wrapped in single quotes.
         var output = """
             COOKIE='authcookie=abc123'
-            HOST='103.63.96.190'
+            HOST='203.0.113.10'
             FINGERPRINT='pin-sha256:mz70'
-            RESOLVE='vpn.bri.co.id:103.63.96.190'
+            RESOLVE='vpn.example.com:203.0.113.10'
             """;
 
         var cookie = GpCookie.Parse(output);
 
         Assert.Equal("authcookie=abc123", cookie.Cookie);
-        Assert.Equal("103.63.96.190", cookie.Host);          // no surrounding quotes
+        Assert.Equal("203.0.113.10", cookie.Host);          // no surrounding quotes
         Assert.Equal("pin-sha256:mz70", cookie.Fingerprint);
-        Assert.Equal("vpn.bri.co.id:103.63.96.190", cookie.Resolve);
+        Assert.Equal("vpn.example.com:203.0.113.10", cookie.Resolve);
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public class GpCookieTests
     public void Parse_Throws_WhenCookieMissing()
     {
         var ex = Assert.Throws<InvalidOperationException>(
-            () => GpCookie.Parse("HOST=vpn.bri.co.id\nFINGERPRINT=sha256:aa"));
+            () => GpCookie.Parse("HOST=vpn.example.com\nFINGERPRINT=sha256:aa"));
 
         Assert.Contains("cookie", ex.Message, StringComparison.OrdinalIgnoreCase);
     }

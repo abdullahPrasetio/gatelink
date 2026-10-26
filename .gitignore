@@ -33,3 +33,6 @@ gatelink-tunnel.log
 
 # Rider / IDE
 .idea/
+
+# Release signing key (never commit)
+.secrets/

@@ -1,18 +1,18 @@
 namespace GateLink.Core;
 
 /// <summary>
-/// Static connection configuration. The gateway is intentionally hard-coded
-/// for this build. Change the values here to retarget the client.
+/// Static connection configuration. No portal is hard-coded or persisted: the
+/// user enters it in the UI form, and the root-owned helper validates it at
+/// connect time.
 /// </summary>
 public static class VpnConfig
 {
-    /// <summary>Default GlobalProtect portal/gateway host.</summary>
-    public const string DefaultGateway = "vpn.bri.co.id";
+    /// <summary>No compiled-in portal; the UI supplies it.</summary>
+    public const string DefaultGateway = "";
 
     /// <summary>
-    /// Active gateway host. Defaults to <see cref="DefaultGateway"/> but can be
-    /// changed at runtime from the UI (the Portal field). openconnect uses this
-    /// value for both the authenticate and tunnel phases.
+    /// Active gateway host. Empty by default; set from the UI (Portal field).
+    /// openconnect uses this value for both the authenticate and tunnel phases.
     /// </summary>
     public static string Gateway { get; set; } = DefaultGateway;
 

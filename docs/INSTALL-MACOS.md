@@ -78,7 +78,7 @@ dotnet run --project src/GateLink.Desktop
 Jendela GateLink akan muncul: header dengan status koneksi, kartu kode OTP
 6 digit yang berjalan dengan hitung mundur, dan panel **Add account**.
 
-> Aplikasi saat ini membawa satu akun contoh ("BRI VPN / demo-user") agar kode
+> Aplikasi saat ini membawa satu akun contoh ("Example VPN / demo-user") agar kode
 > OTP langsung terlihat. Tambahkan akun aslimu lewat QR atau URI manual.
 
 ---
@@ -117,34 +117,40 @@ Di popover: isi Username & Password, lalu klik **⚡ Connect**. OTP dihasilkan
 otomatis oleh aplikasi (tidak perlu diketik). Tombol berubah jadi
 **Disconnect** saat tunnel aktif.
 
-## 5b. Mengaktifkan koneksi penuh (butuh sekali setup root)
+## 5b. Mengaktifkan koneksi penuh (butuh sekali setup helper root)
 
 Fase tunnel openconnect perlu root untuk membuat interface `utun`. GateLink
-memanggil openconnect lewat `sudo -n` (non-interaktif), jadi kamu perlu memasang
-aturan sudoers NOPASSWD sekali:
+memanggil **satu wrapper root-owned** lewat `sudo -n`; sudoers tidak lagi
+memberi NOPASSWD ke openconnect, `/bin/kill`, atau file milik user:
 
 ```bash
 cd GateLink
-./scripts/install-sudoers.sh
+./scripts/install-tunnel-helper.sh --user "$USER"
 ```
 
 Skrip ini:
-- mendeteksi lokasi `openconnect`,
-- memvalidasi aturan dengan `visudo -c` sebelum memasang (tidak akan merusak
-  sudoers sistem),
-- memasang `/etc/sudoers.d/gatelink` (minta password sudo kamu sekali).
+- menyalin openconnect, dylib, `vpnc-script`, dan `hipreport.sh` ke
+  `/usr/local/libexec/gatelink/` sebagai `root:wheel`,
+- memvalidasi rule dengan `visudo -c`,
+- hanya mengizinkan perintah
+  `/usr/local/libexec/gatelink/gatelink-tunnel` di `/etc/sudoers.d/gatelink`.
+
+Wrapper hanya menerima `connect --host <host-dari-form> --fingerprint <pin>`,
+`stop`, `status`, dan `version`; ia sendiri yang menyusun argumen openconnect.
+Jadi caller tidak bisa menyuntikkan `--script`, `--csd-wrapper`, atau opsi lain.
 
 Untuk membatalkan:
 
 ```bash
-./scripts/install-sudoers.sh uninstall
+./scripts/install-tunnel-helper.sh --uninstall
 ```
 
-> **Peringatan keamanan.** NOPASSWD untuk openconnect secara efektif membuka
-> jalur menjalankan kode sebagai root bagi siapa pun yang bisa bertindak sebagai
-> user-mu (openconnect bisa menjalankan script). Pasang hanya di mesin yang kamu
-> percaya. Ini kelemahan yang sama seperti aplikasi asli MantraVPN
-> (`/etc/sudoers.d/mantra2fa-openconnect`).
+> **Catatan keamanan.** Ini bukan NOPASSWD untuk binary serbaguna. Semua file
+> yang dijalankan sebagai root dimiliki `root:wheel`, host berasal dari form
+> dan divalidasi sebagai DNS/IP (tidak ada opsi/path/script dari caller), dan
+> PID yang dihentikan diverifikasi milik openconnect. Residual risk:
+> openconnect tetap memproses input jaringan sebagai root; itu melekat pada
+> model VPN ini sampai pindah ke NetworkExtension.
 
 ## 6. Status integrasi macOS
 
@@ -156,18 +162,26 @@ Yang sudah berfungsi dan terverifikasi jalan di Mac:
 - **Connect tersambung ke openconnect** — tombol Connect menjalankan
   `VpnSession` → openconnect (fase authenticate dengan OTP otomatis). ✅
 
-Elevasi tunnel (Opsi A — sudoers NOPASSWD):
+Elevasi tunnel (root-owned helper):
 
-- **Terpasang via `scripts/install-sudoers.sh`.** Setelah dijalankan sekali,
-  tombol Connect dapat membawa tunnel naik tanpa prompt password. openconnect
-  dipanggil lewat `sudo -n` dan dihentikan lewat pid file dengan `sudo kill`.
-  Lihat peringatan keamanan di bagian 5b.
+- **Terpasang via `scripts/install-tunnel-helper.sh`.** Setelah dijalankan
+  sekali, tombol Connect dapat membawa tunnel naik tanpa prompt password.
+  openconnect hanya dijalankan oleh wrapper root-owned dengan argumen tetap dan
+  script root-owned; stop dilakukan lewat wrapper yang memverifikasi PID.
 
-- **Keychain** — akun 2FA & password tersimpan permanen dan terenkripsi di
-  Keychain login (via `/usr/bin/security`). Round-trip terverifikasi. ✅
-- **Touch ID** — gate biometrik via `LocalAuthentication` (menjalankan snippet
-  Swift). Jika Swift tidak tersedia, fallback ke prompt otorisasi sistem
-  (Touch ID atau password). ✅
+- **Vault terenkripsi** — seed TOTP + password VPN disimpan dalam file
+  AES-256-GCM; kunci 32-byte ada di Keychain dengan ACL yang hanya memercayai
+  app. Membaca kunci meminta persetujuan/Touch ID. Metadata akun (issuer,
+  account, digits, period) tetap plaintext agar daftar bisa dimuat tanpa
+  prompt; seed/password tidak pernah ada di metadata. Item Keychain lama
+  dimigrasikan sekali. ✅
+
+> Saat macOS menanyakan akses Keychain untuk kunci vault, pilih **Allow**
+> (bukan **Always Allow**) agar `/usr/bin/security` tidak diberi izin permanen
+> membaca kunci tersebut.
+- **Touch ID** — prompt user-presence dari Keychain saat kunci vault dibaca
+  (Touch ID atau password login). Satu unlock berlaku selama window, lalu key
+  dihapus dari memori. ✅
 - **Aplikasi .app** — `scripts/build-macos-app.sh` menghasilkan
   `dist/GateLink.app` yang self-contained, `LSUIElement=true` (tanpa ikon dock),
   ber-ikon, dan bisa double-click. ✅
@@ -175,9 +189,13 @@ Elevasi tunnel (Opsi A — sudoers NOPASSWD):
 Catatan jujur tentang yang belum diverifikasi penuh:
 
 - **Handshake VPN sungguhan belum diuji** dengan kredensial asli — itu perlu
-  akun VPN BRI-mu dan akan membuat koneksi jaringan nyata. Build, logika, dan
+  akun VPN gateway-mu dan akan membuat koneksi jaringan nyata. Build, logika, dan
   peluncuran aplikasi sudah terbukti; koneksi aktual perlu kamu coba sendiri.
-- **Touch ID via Swift** diuji hanya jalur kompilasinya; prompt biometrik nyata
-  perlu kamu konfirmasi di Mac dengan Touch ID.
+- **Prompt user-presence Keychain** — kunci vault dibaca lewat `/usr/bin/security`
+  dengan ACL yang mempercayai app; prompt nyata (Touch ID atau password login)
+  perlu dikonfirmasi di Mac. Migrasi item Keychain lama berjalan otomatis saat
+  pertama kali; buat backup Keychain dulu jika ingin aman.
+- **Windows** — DPAPI + Windows Hello sudah di-compile untuk target Windows,
+  tetapi belum dijalankan di mesin Windows dalam pengujian ini.
 
-Semua logika VPN & OTP ada di `GateLink.Core` (32 unit test lulus).
+Semua logika VPN & OTP ada di `GateLink.Core` (82 unit test lulus).

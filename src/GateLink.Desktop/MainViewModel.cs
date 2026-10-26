@@ -29,13 +29,27 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         // Pick the real platform store when available; fall back to in-memory
         // elsewhere so the app still runs on unsupported platforms.
-        ISecretStore store = OperatingSystem.IsMacOS()
-            ? new KeychainSecretStore()
-            : new InMemorySecretStore();
-
-        IBiometricGate gate = OperatingSystem.IsMacOS()
-            ? new TouchIdGate()
-            : new StubBiometricGate();
+        ISecretStore store;
+        IBiometricGate gate;
+        if (OperatingSystem.IsMacOS())
+        {
+            var macStore = new EncryptedFileSecretStore();
+            store = macStore;
+            gate = new VaultKeyGate(macStore);
+        }
+#if WINDOWS
+        else
+        {
+            store = new DpapiSecretStore();
+            gate = new WindowsHelloGate();
+        }
+#else
+        else
+        {
+            store = new InMemorySecretStore();
+            gate = new StubBiometricGate();
+        }
+#endif
 
         _vault = new OtpVault(gate, store)
         {
@@ -227,7 +241,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private DateTime _connectedSince;
 
-    /// <summary>Human status line, e.g. "Connected to vpn.bri.co.id since 16:18".</summary>
+    /// <summary>Human status line, e.g. "Connected to vpn.example.com since 16:18".</summary>
     public string StatusLine => _phase switch
     {
         VpnPhase.Connected => $"Connected to {Gateway} since {_connectedSince:HH:mm}",
@@ -294,9 +308,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public async void ToggleReveal()
     {
         if (OtpRevealed) { OtpRevealed = false; return; }   // hiding: no auth
+        if (_entry is null) return;
 
-        var ok = await _vault.EnsureUnlockedAsync("Reveal your one-time code");
-        if (!ok) { StatusText = "Unlock required to reveal the code"; return; }
+        var generator = await _vault.GetGeneratorAsync(_entry);
+        if (generator is null)
+        {
+            StatusText = "Unlock required to reveal the code";
+            return;
+        }
+
+        _generator = generator;
         OtpRevealed = true;
     }
 
@@ -312,6 +333,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>Adds an entry produced by the Add account dialog and persists it.</summary>
     public async void AddEntry(VaultEntry entry)
     {
+        if (!await _vault.EnsureUnlockedAsync("Save this account"))
+        {
+            AddMessage = "Unlock cancelled; account not saved.";
+            return;
+        }
+
         // Replace an existing account with the same id, else append.
         _entries.RemoveAll(e => e.Id == entry.Id);
         _entries.Add(entry);
@@ -339,6 +366,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public async void DeleteCurrentAccount()
     {
         if (_entry is null) return;
+        if (!await _vault.EnsureUnlockedAsync("Delete this account"))
+        {
+            AddMessage = "Unlock cancelled; account not deleted.";
+            return;
+        }
+
         var id = _entry.Id;
         _entries.RemoveAll(e => e.Id == id);
         try { await _vault.DeleteAsync(id); } catch { /* best effort */ }
@@ -421,7 +454,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// </summary>
     public async void BeginConnect()
     {
-        if (_connected)
+        if (_connected || Phase == VpnPhase.Connected)
         {
             await _session.DisconnectAsync();
             _connected = false;
@@ -430,9 +463,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         if (_entry is null) { StatusText = "Add a 2FA account first (+)"; return; }
         if (!_session.IsEnvironmentReady) { StatusText = "Install OpenConnect"; return; }
-        if (string.IsNullOrWhiteSpace(Username) || string.IsNullOrWhiteSpace(Password))
+        if (string.IsNullOrWhiteSpace(Username))
         {
-            StatusText = "Enter username & password";
+            StatusText = "Enter username";
             return;
         }
         if (string.IsNullOrWhiteSpace(Gateway))
@@ -443,33 +476,49 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         // Apply the (possibly edited) gateway so openconnect targets it.
         VpnConfig.Gateway = Gateway.Trim();
+        if (!TunnelArgs.IsValidHost(VpnConfig.Gateway))
+        {
+            StatusText = "Gateway must be a hostname or IPv4 address (letters, digits, dots, hyphens).";
+            return;
+        }
 
-        // On macOS, make sure sudoers authorizes the CURRENT openconnect binary
-        // (the bundled one). EnsureInstalledAsync reinstalls if the rule is
-        // missing or points at a different path — fixing the "sudo: a password
-        // is required" failure after switching to the bundled openconnect.
+        // On macOS the tunnel runs through a root-owned fixed-purpose helper.
+        // EnsureInstalledAsync probes the existing helper first, so this does
+        // not prompt when everything is already installed and authorized.
         if (OperatingSystem.IsMacOS())
         {
-            var env = new VpnEnvironment();
-            if (!Platform.SudoersSetup.IsInstalledFor(env.OpenConnectPath ?? ""))
+            if (!Platform.TunnelHelper.IsInstalled)
             {
-                StatusText = "Authorizing (one-time setup)…";
-                var ok = await Platform.SudoersSetup.EnsureInstalledAsync(env);
-                if (!ok)
-                {
-                    StatusText = "Authorization failed or cancelled. GateLink needs one-time root access to start the tunnel.";
-                    return;
-                }
+                StatusText = "GateLink needs a one-time root helper to create the VPN tunnel. " +
+                             "It runs only the bundled OpenConnect with fixed options.";
+            }
+
+            if (!await Platform.TunnelHelper.EnsureInstalledAsync())
+            {
+                StatusText = "Root helper installation failed or was cancelled. " +
+                             "Run scripts/install-tunnel-helper.sh once, then retry.";
+                return;
             }
         }
 
         // Match the account by the typed username so its OTP is used. Carry the
-        // live username/password from the form into the entry.
+        // live username into the entry. A blank password means "use the stored
+        // one"; VaultMerge preserves it, and ConnectWithVaultAsync loads it
+        // after the unlock gate.
         var source = MatchEntryForUsername(Username) ?? _entry;
-        var entry = source with { VpnUsername = Username, VpnPassword = Password };
+        var entry = source with
+        {
+            VpnUsername = Username,
+            VpnPassword = string.IsNullOrWhiteSpace(Password) ? null : Password,
+        };
 
-        // Persist the credentials so they survive restarts (encrypted in the
-        // Keychain). This is what makes the password "remembered".
+        if (!await _vault.EnsureUnlockedAsync($"Connect to {VpnConfig.Gateway}"))
+        {
+            StatusText = "Unlock cancelled. VPN not connected.";
+            return;
+        }
+
+        // Persist the credentials so they survive restarts (encrypted at rest).
         _entries.RemoveAll(e => e.Id == entry.Id);
         _entries.Add(entry);
         _entry = entry;
@@ -512,7 +561,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private void SetEntry(VaultEntry entry)
     {
         _entry = entry;
-        _generator = entry.CreateGenerator();
+        // Metadata-only entries (loaded at startup) have no seed until the
+        // vault is unlocked; do not construct a generator from an empty secret.
+        _generator = string.IsNullOrEmpty(entry.Secret) ? null : entry.CreateGenerator();
         Issuer = entry.Issuer;
         Account = entry.Account;
         if (!string.IsNullOrEmpty(entry.VpnUsername)) Username = entry.VpnUsername;
@@ -523,7 +574,27 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private void RefreshOtp()
     {
-        if (_generator is null) return;
+        // Drop the in-memory generator as soon as the sliding window expires so
+        // the code stops updating (and the seed is no longer held by the UI).
+        if (_generator is not null && !_vault.IsUnlocked)
+        {
+            _generator = null;
+            _vault.Lock();
+            if (_otpRevealed)
+            {
+                _otpRevealed = false;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(OtpMasked)));
+            }
+        }
+
+        if (_generator is null)
+        {
+            OtpDisplay = "— — —";
+            SecondsRemaining = 0;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(OtpMasked)));
+            return;
+        }
+
         OtpDisplay = FormatCode(_generator.Generate());
         SecondsRemaining = _generator.SecondsRemaining();
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(OtpMasked)));

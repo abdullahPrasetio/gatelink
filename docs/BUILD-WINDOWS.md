@@ -26,7 +26,7 @@ To get the Windows build:
 |--------------|-----|-----|
 | Windows 10/11 x64 | runtime | — |
 | **OpenConnect for Windows** + Wintun driver | the VPN engine | [OpenConnect-GUI release](https://github.com/openconnect/openconnect-gui/releases) bundles both, or install `openconnect.exe` on PATH |
-| Run **as Administrator** | create the virtual adapter | the app manifest already requests elevation |
+| Run **as Administrator** | create the virtual adapter | the app manifest requests elevation (one UAC prompt); a privileged helper/service is the remaining hardening item |
 
 GateLink finds `openconnect.exe` on PATH or in the common install folders.
 
@@ -35,9 +35,9 @@ GateLink finds `openconnect.exe` on PATH or in the common install folders.
 | Concern | macOS | Windows |
 |---------|-------|---------|
 | Credential input | PTY via `expect` | stdin pipe, `--passwd-on-stdin` (password+OTP combined) |
-| Elevation | `sudo` + sudoers | run as Administrator (manifest); Windows Service later |
-| Secret storage | Keychain (`security`) | in-memory for now; DPAPI planned |
-| Biometrics | Touch ID | stub for now; Windows Hello planned |
+| Elevation | root-owned fixed helper via `sudo` | run as Administrator (manifest); privileged helper/service still pending |
+| Secret storage | AES-GCM file + Keychain-protected key | DPAPI (`vault.dat`, CurrentUser) + plaintext metadata |
+| Biometrics | Keychain user-presence prompt | Windows Hello (`UserConsentVerifier`); DPAPI still protects at rest if Hello is unavailable |
 | Open at Login | LaunchAgent | not yet (registry/Startup planned) |
 | HIP report | `hipreport.sh` via `--csd-wrapper` | not wired (shell script is POSIX) |
 
@@ -48,16 +48,17 @@ password+OTP, cookie parsing) is identical and lives in `GateLink.Core`.
 
 ```powershell
 dotnet publish src\GateLink.Desktop\GateLink.Desktop.csproj `
-  -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true `
-  -o publish\win-x64
+  -c Release -f net9.0-windows10.0.19041.0 -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true -o publish\win-x64
 ```
 
 Run `publish\win-x64\GateLink.exe` as Administrator.
 
 ## Known gaps on Windows
 
-- Secret storage, biometrics, Open-at-Login, and HIP report are macOS-only so
-  far. On Windows the account/OTP work and the tunnel can connect when run
-  elevated with openconnect on PATH, but password persistence and HIP
-  submission still need Windows-specific implementations.
+- Open-at-Login and HIP report are still macOS-only.
+- The UI still runs elevated (manifest `requireAdministrator`) because it starts
+  openconnect directly. Moving openconnect behind a privileged helper/service is
+  the remaining Windows hardening item; until then, the elevated process parses
+  untrusted QR images and gateway replies.
 - The tray single-click-to-open behaviour uses a menu on both platforms.

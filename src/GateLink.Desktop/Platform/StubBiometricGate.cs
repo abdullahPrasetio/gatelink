@@ -4,7 +4,7 @@ namespace GateLink.Desktop.Platform;
 
 /// <summary>
 /// Placeholder gate that approves without prompting, so the UI is runnable
-/// during development. Replace with TouchIdGate (macOS, LocalAuthentication)
+/// during development. Replace with the platform biometric gate
 /// and WindowsHelloGate (Windows, UserConsentVerifier).
 /// </summary>
 public sealed class StubBiometricGate : IBiometricGate

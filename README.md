@@ -1,6 +1,6 @@
 # GateLink
 
-A Windows tray client for **GlobalProtect** VPN gateways, built on top of
+A macOS menu-bar and Windows tray client for **GlobalProtect** VPN gateways, built on top of
 [OpenConnect](https://www.infradead.org/openconnect/). GateLink automates the
 GlobalProtect two-factor authentication flow (password + OTP), obtains the WebVPN
 session cookie, then launches `openconnect` to establish the tunnel.
@@ -39,37 +39,51 @@ openconnect --protocol=gp --cookie-on-stdin --servercert <fp> <gateway>
   6-digit code itself, so connecting is one tap.
 - **Add accounts two ways.** Scan a QR image (`otpauth://` payload) or paste the
   URI / enter the Base32 key manually. Both paths converge on `OtpAuthUri`.
-- **Biometric vault (Touch ID / Windows Hello).** One unlock opens the vault for
-  a sliding window; connect and reveal/copy all proceed without re-prompting
-  until auto-relock, mirroring the original app's BiometricGate.
+- **Biometric vault (Touch ID / Windows Hello).** macOS stores the vault key in
+  the login Keychain behind an app-only ACL and prompts for user presence when
+  the key is read; Windows uses Windows Hello plus DPAPI. One unlock opens the
+  vault for a sliding window, then cached key material is dropped.
 
 `GateLink.Core` is platform-neutral (`net8.0`) and fully unit-tested on any OS
-(32 tests, including the RFC 6238 TOTP vectors and QR round-trips). Only the UI
+(82 tests, including the RFC 6238 TOTP vectors, QR round-trips, vault encryption and release signatures). Only the UI
 layer is platform-specific.
 
 ## Requirements
 
-- Windows 10/11 x64
-- [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
+- Windows 10/11 x64 (the app requests administrator elevation for the adapter)
+- [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) to build
 - OpenConnect for Windows on PATH (or bundled) with the Wintun driver
 
 ## Build
 
 ```powershell
 dotnet build
-dotnet run --project src/GateLink.App
+dotnet run --project src/GateLink.Desktop
 ```
 
 ## Troubleshooting
 
-**"Tunnel did not establish" / "Root authorization missing" on macOS.** Check
-`~/gatelink-tunnel.log`. If it contains `sudo: a password is required`, the rule
-in `/etc/sudoers.d/gatelink` does not cover the openconnect binary GateLink is
-using (the app prefers the copy bundled inside the `.app`). Quit and reopen
-GateLink, then press Connect once: it installs the matching rule through the
-native macOS admin prompt. Alternatively run `./scripts/install-sudoers.sh`,
-which authorizes the bundled **and** system openconnect binaries.
+**"Root tunnel helper missing or not authorized" on macOS.** Check
+`~/gatelink-tunnel.log`. GateLink now uses a root-owned, fixed-purpose helper at
+`/usr/local/libexec/gatelink/gatelink-tunnel`; sudoers authorizes only that
+wrapper, never openconnect or `/bin/kill`. Install it once with:
+
+```bash
+./scripts/install-tunnel-helper.sh --user "$USER"
+```
+
+Or press Connect and approve the native admin prompt. The wrapper only runs the
+bundled OpenConnect with fixed options; the host comes from the Portal field. Remove it
+with `./scripts/install-tunnel-helper.sh --uninstall`.
 
 ## Gateway
 
-The default gateway is configured in `src/GateLink.Core/VpnConfig.cs`.
+No gateway is hard-coded and none is stored by the installer. Enter the
+portal/gateway in the UI form on every launch; the root-owned helper validates
+it as a hostname and runs the bundled OpenConnect with fixed arguments.
+
+The one-time helper install needs no gateway:
+
+```bash
+./scripts/install-tunnel-helper.sh --user "$USER"
+```

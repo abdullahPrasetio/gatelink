@@ -42,6 +42,7 @@ public static class UpdateChecker
                 IsNewer = remote > CurrentVersion,
                 HtmlUrl = release.HtmlUrl ?? "",
                 MacAssetUrl = FindAsset(release, "GateLink.dmg", "macos"),
+                MacSignatureUrl = FindAssetExact(release, "GateLink.dmg.sig"),
                 WindowsAssetUrl = FindAsset(release, "Setup.exe", "windows"),
             };
         }
@@ -49,6 +50,18 @@ public static class UpdateChecker
         {
             return null; // network error, GitHub down, etc. — silently ignore
         }
+    }
+
+    private static string? FindAssetExact(GitHubRelease r, string name)
+    {
+        if (r.Assets is null) return null;
+        foreach (var a in r.Assets)
+        {
+            if (a.BrowserDownloadUrl is null) continue;
+            if (string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase))
+                return a.BrowserDownloadUrl;
+        }
+        return null;
     }
 
     private static string? FindAsset(GitHubRelease r, string contains1, string contains2)
@@ -86,5 +99,6 @@ public sealed record ReleaseInfo
     public required bool IsNewer { get; init; }
     public required string HtmlUrl { get; init; }
     public string? MacAssetUrl { get; init; }
+    public string? MacSignatureUrl { get; init; }
     public string? WindowsAssetUrl { get; init; }
 }

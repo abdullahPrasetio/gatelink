@@ -45,13 +45,15 @@ public static class Prerequisites
                 expect ?? "not found",
                 expect is not null ? null : "expect ships with macOS; if missing: brew install expect"));
 
-            // 3. sudoers rule — needed so the tunnel can run as root without a prompt.
-            var sudoers = File.Exists("/etc/sudoers.d/gatelink");
+            // 3. Root tunnel helper — needed so the tunnel can run without a
+            //    per-connect prompt. It is a fixed-purpose wrapper, not a
+            //    NOPASSWD grant to openconnect or kill.
+            var helper = File.Exists("/usr/local/libexec/gatelink/gatelink-tunnel");
             items.Add(new PrerequisiteItem(
-                "Root access (sudoers)",
-                sudoers,
-                sudoers ? "configured" : "not installed",
-                sudoers ? null : "Run: ./scripts/install-sudoers.sh"));
+                "Root tunnel helper",
+                helper,
+                helper ? "installed" : "not installed",
+                helper ? null : "Run: ./scripts/install-tunnel-helper.sh --user \"$USER\""));
 
             // 4. HIP report script — optional but needed by gateways enforcing HIP.
             var hip = env.HipReportScriptPath is not null;

@@ -59,13 +59,24 @@ public static class PtyAuthenticator
         await proc.StandardInput.WriteAsync(script);
         proc.StandardInput.Close();
 
-        await proc.WaitForExitAsync(ct);
+        // A gateway that stops answering can leave expect/openconnect waiting
+        // forever, holding the password/OTP in memory. Bound the login phase.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+        try
+        {
+            await proc.WaitForExitAsync(linked.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { /* already gone */ }
+            if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
+            throw new InvalidOperationException(
+                "Login timed out after 90 seconds. Check the gateway and try again.");
+        }
 
         var text = output.ToString();
 
-        // Write a sanitized transcript to help diagnose auth failures. The OTP
-        // and password are never written; we only keep openconnect's own output.
-        TryWriteTranscript(text);
         if (!text.Contains("COOKIE", StringComparison.OrdinalIgnoreCase))
         {
             var detail = ExtractError(text);
@@ -128,20 +139,6 @@ public static class PtyAuthenticator
                 return line.Length > 90 ? line[..90] : line;
         }
         return string.Empty;
-    }
-
-    private static void TryWriteTranscript(string text)
-    {
-        try
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var path = Path.Combine(home, "gatelink-auth.log");
-            File.WriteAllText(path, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}]\n{text}\n");
-        }
-        catch
-        {
-            // diagnostics are best-effort
-        }
     }
 
     private static string? FindExpect()

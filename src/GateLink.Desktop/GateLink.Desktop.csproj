@@ -4,7 +4,8 @@
     <!-- WinExe = GUI subsystem: no black console window on Windows. Avalonia
          handles this correctly on macOS too. -->
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFrameworks>net9.0;net9.0-windows10.0.19041.0</TargetFrameworks>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
@@ -13,8 +14,8 @@
     <AssemblyName>GateLink</AssemblyName>
   </PropertyGroup>
 
-  <!-- Request admin elevation only on Windows (for the Wintun/TAP adapter). -->
-  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' or $(DefineConstants.Contains('WINDOWS'))">
+  <!-- Request admin elevation only on the Windows target (Wintun/TAP adapter). -->
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
@@ -40,6 +41,7 @@
     <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.4" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>

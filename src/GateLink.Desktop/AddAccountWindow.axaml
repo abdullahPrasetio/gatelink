@@ -42,7 +42,7 @@
                  CornerRadius="8" Height="38" />
 
         <TextBlock Text="Label (optional, for manual secret)" Classes="label" Margin="0,4,0,0" />
-        <TextBox x:Name="LabelBox" PlaceholderText="BRI VPN"
+        <TextBox x:Name="LabelBox" PlaceholderText="Example VPN"
                  Background="#3a3a3d" Foreground="#f2f2f7" BorderBrush="#4a4a4d"
                  CornerRadius="8" Height="38" />
 

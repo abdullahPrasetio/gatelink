@@ -30,7 +30,7 @@ public class OtpVaultTests
     private static VaultEntry SampleEntry() => new()
     {
         Id = "1",
-        Issuer = "BRI VPN",
+        Issuer = "Example VPN",
         Account = "alice",
         Secret = "JBSWY3DPEHPK3PXP",
     };

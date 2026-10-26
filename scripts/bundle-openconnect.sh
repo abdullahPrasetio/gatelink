@@ -91,11 +91,23 @@ for f in openconnect *.dylib; do
 done
 
 # 3. Bundle vpnc-script (needed to configure routes on connect).
-VPNC="$(find /opt/homebrew /usr/local -name vpnc-script 2>/dev/null | head -1)"
+# Use deterministic locations first; `find | head` can trip pipefail.
+VPNC=""
+for candidate in \
+  /opt/homebrew/etc/vpnc/vpnc-script \
+  /usr/local/etc/vpnc/vpnc-script \
+  /etc/vpnc/vpnc-script; do
+  if [ -f "$candidate" ]; then VPNC="$candidate"; break; fi
+done
+if [ -z "$VPNC" ]; then
+  VPNC="$(find /opt/homebrew /usr/local -name vpnc-script -print -quit 2>/dev/null || true)"
+fi
 if [ -n "$VPNC" ]; then
   cp "$VPNC" "$OUT/vpnc-script"
   chmod +x "$OUT/vpnc-script"
   echo "bundled vpnc-script"
+else
+  echo "WARNING: vpnc-script not found; the tunnel will not configure routes." >&2
 fi
 
 echo

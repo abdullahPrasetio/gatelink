@@ -149,7 +149,7 @@
                 <TextBlock Text="Portal" Classes="label" />
                 <Border Classes="field">
                     <TextBox Classes="plain" Text="{Binding Gateway, Mode=TwoWay}"
-                             PlaceholderText="vpn.example.com" />
+                             PlaceholderText="Portal hostname" />
                 </Border>
 
                 <TextBlock Text="Username" Classes="label" Margin="0,12,0,4" />

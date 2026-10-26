@@ -75,12 +75,12 @@ public class OtpAuthUriTests
     [Fact]
     public void Parse_FullUri_ExtractsAllFields()
     {
-        var uri = "otpauth://totp/BRI%20VPN:alice?secret=JBSWY3DPEHPK3PXP&issuer=BRI%20VPN&digits=6&period=30&algorithm=SHA1";
+        var uri = "otpauth://totp/Example%20VPN:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example%20VPN&digits=6&period=30&algorithm=SHA1";
 
         var parsed = OtpAuthUri.Parse(uri);
 
         Assert.Equal("JBSWY3DPEHPK3PXP", parsed.Secret);
-        Assert.Equal("BRI VPN", parsed.Issuer);
+        Assert.Equal("Example VPN", parsed.Issuer);
         Assert.Equal("alice", parsed.Account);
         Assert.Equal(6, parsed.Digits);
         Assert.Equal(30, parsed.Period);

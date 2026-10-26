@@ -29,7 +29,7 @@ public class VpnSessionVaultTests
     private static VaultEntry EntryWithCreds() => new()
     {
         Id = "1",
-        Issuer = "BRI VPN",
+        Issuer = "Example VPN",
         Account = "alice",
         Secret = "JBSWY3DPEHPK3PXP",
         VpnUsername = "alice",
