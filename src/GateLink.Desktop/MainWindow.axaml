@@ -4,8 +4,7 @@
         x:Class="GateLink.Desktop.MainWindow"
         x:DataType="vm:MainViewModel"
         Width="380"
-        SizeToContent="Height"
-        MaxHeight="640"
+        Height="560"
         CanResize="False"
         Title="GateLink"
         Background="#2b2b2e"
@@ -197,6 +196,11 @@
         <!-- ===== Footer ===== -->
         <Border Grid.Row="3" Background="#2a2a2d" Padding="16,10" BorderBrush="#252527" BorderThickness="0,1,0,0">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <!-- Version (shown when up to date) -->
+                <TextBlock Grid.Column="0" Text="{Binding VersionText}" Foreground="#6b7280"
+                           FontSize="12" VerticalAlignment="Center"
+                           IsVisible="{Binding !UpdateAvailable}" />
+                <!-- New-update button (shown when an update exists) -->
                 <Button Grid.Column="0" Content="{Binding UpdateText}" Click="OnInstallUpdate"
                         IsVisible="{Binding UpdateAvailable}"
                         Background="Transparent" BorderThickness="0" Padding="0"

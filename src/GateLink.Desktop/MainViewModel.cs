@@ -59,12 +59,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
         Gateway = VpnConfig.Gateway;
         _openAtLogin = Platform.LoginItem.IsEnabled;  // reflect real state
         ButtonText = "Connect";
+        VersionText = "v" + UpdateChecker.CurrentVersion.ToString(3);
         if (!_session.IsEnvironmentReady)
             StatusText = "OpenConnect not found. Install it (brew install openconnect).";
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += (_, _) => RefreshOtp();
         _timer.Start();
+
+        // If a tunnel is still up from a previous run (app was quit while
+        // connected), reflect that instead of showing "Not connected".
+        _session.AdoptExistingTunnel();
 
         _ = LoadSavedAccountAsync();
         _ = CheckForUpdateAsync();
@@ -147,6 +152,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private string _gateway = "";
     public string Gateway { get => _gateway; set => Set(ref _gateway, value); }
+
+    private string _versionText = "";
+    public string VersionText { get => _versionText; private set => Set(ref _versionText, value); }
 
     private string _otpDisplay = "— — —";
     public string OtpDisplay { get => _otpDisplay; private set => Set(ref _otpDisplay, value); }
