@@ -187,11 +187,19 @@ public sealed class OpenConnectRunner : IAsyncDisposable
         psi.ArgumentList.Add(cookie.Host);
 
         var tunnelLog = new StringBuilder();
+        var logLock = new object();
         void Capture(string line)
         {
-            tunnelLog.AppendLine(line);
+            // stdout and stderr fire on separate threads — guard the shared
+            // StringBuilder to avoid a race (previously crashed in ToString()).
+            string snapshot;
+            lock (logLock)
+            {
+                tunnelLog.AppendLine(line);
+                snapshot = tunnelLog.ToString();
+            }
             OutputReceived?.Invoke(this, line);
-            TryWriteTunnelLog(tunnelLog.ToString());
+            TryWriteTunnelLog(snapshot);
         }
 
         _process = new Process { StartInfo = psi, EnableRaisingEvents = true };

@@ -50,69 +50,65 @@ public static class AutoUpdater
             await stream.CopyToAsync(file, ct);
         }
 
-        // 2. Mount the DMG.
+        var currentApp = ResolveCurrentAppBundle();
+        if (currentApp is null)
+        {
+            // Not running from a bundle (e.g. dotnet run) — just open the DMG.
+            await RunAsync("/usr/bin/open", $"\"{tmp}\"", ct);
+            return "Opened the update DMG. Drag GateLink into Applications.";
+        }
+
+        // Replacing a running .app from inside itself is unreliable (the bundle
+        // is in use). Instead we hand off to a detached shell script that waits
+        // for this process to quit, swaps the bundle, and relaunches. Then we
+        // quit immediately.
         progress?.Invoke("Installing update...");
-        var mountPoint = await RunAsync("/usr/bin/hdiutil", $"attach \"{tmp}\" -nobrowse -readonly", ct);
-        // Parse mount point from hdiutil output (last column of last line).
-        var volPath = ParseMountPoint(mountPoint);
-        if (volPath is null)
-            return "Could not mount the update DMG.";
 
-        try
+        var pid = Environment.ProcessId;
+        var script = Path.Combine(Path.GetTempPath(), "gatelink-update.sh");
+        var scriptBody = $$"""
+            #!/bin/bash
+            set -e
+            DMG="{{tmp}}"
+            APP="{{currentApp}}"
+            PID={{pid}}
+
+            # 1. Wait for GateLink to quit (max ~15s).
+            for i in $(seq 1 60); do
+              kill -0 "$PID" 2>/dev/null || break
+              sleep 0.25
+            done
+
+            # 2. Mount, copy the new app over the old, unmount.
+            MP=$(hdiutil attach "$DMG" -nobrowse -readonly | grep -o '/Volumes/.*' | tail -1)
+            NEW=$(ls -d "$MP"/*.app 2>/dev/null | head -1)
+            if [ -n "$NEW" ]; then
+              rm -rf "$APP.bak"
+              mv "$APP" "$APP.bak" 2>/dev/null || true
+              cp -R "$NEW" "$APP"
+              rm -rf "$APP.bak"
+            fi
+            hdiutil detach "$MP" >/dev/null 2>&1 || true
+            rm -f "$DMG"
+
+            # 3. Relaunch.
+            open "$APP"
+            rm -f "{{script}}"
+            """;
+        await File.WriteAllTextAsync(script, scriptBody, ct);
+        await RunAsync("/bin/chmod", $"+x \"{script}\"", ct);
+
+        // Launch the updater detached so it survives this process exiting.
+        Process.Start(new ProcessStartInfo("/bin/bash")
         {
-            // 3. Find the .app inside the mounted volume.
-            var newApp = Directory.GetDirectories(volPath, "*.app").FirstOrDefault();
-            if (newApp is null) return "No .app found in the update DMG.";
+            ArgumentList = { script },
+            UseShellExecute = false,
+        });
 
-            // 4. Determine where the current app lives.
-            var currentApp = ResolveCurrentAppBundle();
-            if (currentApp is null)
-                return "Could not determine current app location. Update manually.";
-
-            // 5. Replace: remove old, copy new.
-            progress?.Invoke("Replacing app...");
-            var backup = currentApp + ".old";
-            if (Directory.Exists(backup)) Directory.Delete(backup, true);
-            Directory.Move(currentApp, backup);
-
-            try
-            {
-                CopyDirectory(newApp, currentApp);
-            }
-            catch
-            {
-                // Roll back on failure.
-                if (Directory.Exists(backup))
-                {
-                    if (Directory.Exists(currentApp)) Directory.Delete(currentApp, true);
-                    Directory.Move(backup, currentApp);
-                }
-                throw;
-            }
-
-            // Clean up backup.
-            try { Directory.Delete(backup, true); } catch { /* best effort */ }
-
-            // 6. Relaunch the new app.
-            progress?.Invoke("Relaunching...");
-            Process.Start(new ProcessStartInfo("/usr/bin/open")
-            {
-                ArgumentList = { "-n", currentApp },
-                UseShellExecute = false,
-            });
-
-            // Give the new process a moment to start, then exit this one.
-            await Task.Delay(1000, ct);
-            Environment.Exit(0);
-
-            return "Updated!"; // unreachable, but satisfies return type
-        }
-        finally
-        {
-            // 7. Unmount.
-            _ = RunAsync("/usr/bin/hdiutil", $"detach \"{volPath}\"", CancellationToken.None);
-            try { File.Delete(tmp); } catch { /* temp cleanup */ }
-        }
+        progress?.Invoke("Restarting...");
+        await Task.Delay(500, ct);
+        Environment.Exit(0);
+        return "Updating...";
     }
 
     private static string? ResolveCurrentAppBundle()
@@ -122,21 +118,6 @@ public static class AutoUpdater
         // .../GateLink.app/Contents/MacOS/GateLink  →  .../GateLink.app
         var idx = exe.IndexOf(".app/", StringComparison.Ordinal);
         return idx < 0 ? null : exe[..(idx + 4)];
-    }
-
-    private static string? ParseMountPoint(string hdiutilOutput)
-    {
-        // hdiutil attach output: last line, last whitespace-delimited field is the volume path.
-        foreach (var raw in hdiutilOutput.Split('\n').Reverse())
-        {
-            var line = raw.Trim();
-            if (line.Contains("/Volumes/"))
-            {
-                var idx = line.IndexOf("/Volumes/", StringComparison.Ordinal);
-                return line[idx..].Trim();
-            }
-        }
-        return null;
     }
 
     private static async Task<string> RunAsync(string exe, string args, CancellationToken ct)
@@ -151,15 +132,6 @@ public static class AutoUpdater
         var output = await p.StandardOutput.ReadToEndAsync(ct);
         await p.WaitForExitAsync(ct);
         return output;
-    }
-
-    private static void CopyDirectory(string src, string dst)
-    {
-        Directory.CreateDirectory(dst);
-        foreach (var file in Directory.GetFiles(src))
-            File.Copy(file, Path.Combine(dst, Path.GetFileName(file)));
-        foreach (var dir in Directory.GetDirectories(src))
-            CopyDirectory(dir, Path.Combine(dst, Path.GetFileName(dir)));
     }
 
     private static void OpenBrowser(string url)
