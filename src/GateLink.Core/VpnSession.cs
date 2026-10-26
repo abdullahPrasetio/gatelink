@@ -143,8 +143,57 @@ public sealed class VpnSession : IAsyncDisposable
         Transition(VpnPhase.Connecting);
         _runner.StartTunnel(_lastCookie);
 
+        // Wait until openconnect reports the tunnel is actually established,
+        // instead of flipping to Connected the instant the process launches
+        // (which caused a Connected→Reconnecting flicker). We watch its output
+        // for the "Configured as <ip>" line, with a timeout fallback.
+        var established = await WaitForTunnelEstablishedAsync(ct);
+        if (!established)
+        {
+            await _runner.StopAsync();
+            Transition(VpnPhase.Failed);
+            throw new InvalidOperationException("Tunnel did not establish. Check credentials or gateway.");
+        }
+
         Transition(VpnPhase.Connected);
         StartHealthMonitor();
+    }
+
+    /// <summary>
+    /// Waits for openconnect to print the line that means the tunnel is up
+    /// ("Configured as ..."), or fails if the process dies or we time out.
+    /// </summary>
+    private async Task<bool> WaitForTunnelEstablishedAsync(CancellationToken ct)
+    {
+        var tcs = new TaskCompletionSource<bool>();
+
+        void OnLine(object? _, string line)
+        {
+            if (line.Contains("Configured as", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("Connected as", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("ESP session established", StringComparison.OrdinalIgnoreCase))
+                tcs.TrySetResult(true);
+        }
+
+        void OnExit(object? _, int __) => tcs.TrySetResult(false);
+
+        _runner.OutputReceived += OnLine;
+        _runner.Exited += OnExit;
+        try
+        {
+            // Up to 30s for SSL + HIP + routing.
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+            using (linked.Token.Register(() => tcs.TrySetResult(false)))
+            {
+                return await tcs.Task;
+            }
+        }
+        finally
+        {
+            _runner.OutputReceived -= OnLine;
+            _runner.Exited -= OnExit;
+        }
     }
 
     public async Task DisconnectAsync()
@@ -158,48 +207,17 @@ public sealed class VpnSession : IAsyncDisposable
 
     private void OnTunnelExited(object? sender, int exitCode)
     {
-        Log?.Invoke(this, $"Tunnel exited with code {exitCode}.");
+        // Ignore if we already moved on (manual disconnect / idle).
         if (Phase is VpnPhase.Disconnecting or VpnPhase.Idle) return;
 
-        // Unexpected drop: attempt auto-reconnect using the last cookie.
-        // Guard the fire-and-forget task so a failure can never crash the app.
-        _ = Task.Run(async () =>
-        {
-            try { await AutoReconnectAsync(); }
-            catch (Exception ex) { Log?.Invoke(this, $"Reconnect error: {ex.Message}"); }
-        });
-    }
+        Log?.Invoke(this, $"Tunnel process exited (code {exitCode}).");
+        StopHealthMonitor();
 
-    /// <summary>
-    /// Re-establishes the tunnel after an unexpected drop, up to
-    /// <see cref="VpnConfig.MaxReconnectAttempts"/>. Reuses the existing cookie;
-    /// if it has expired, a full re-authentication is required by the user.
-    /// </summary>
-    private async Task AutoReconnectAsync()
-    {
-        if (_lastCookie is null) { Transition(VpnPhase.Failed); return; }
-
-        while (ReconnectAttempts < VpnConfig.MaxReconnectAttempts)
-        {
-            ReconnectAttempts++;
-            Transition(VpnPhase.Reconnecting);
-            Log?.Invoke(this, $"Auto-reconnect attempt {ReconnectAttempts}/{VpnConfig.MaxReconnectAttempts}...");
-
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2 * ReconnectAttempts));
-                _runner.StartTunnel(_lastCookie);
-                Transition(VpnPhase.Connected);
-                StartHealthMonitor();
-                return;
-            }
-            catch (Exception ex)
-            {
-                Log?.Invoke(this, $"Reconnect failed: {ex.Message}");
-            }
-        }
-
-        Transition(VpnPhase.Failed);
+        // openconnect handles transient drops itself (--reconnect-timeout). If
+        // the PROCESS has actually exited, the session is over — we don't launch
+        // a second openconnect (that caused the connect/reconnect glitch). Just
+        // reflect that we're no longer connected.
+        Transition(VpnPhase.Idle);
     }
 
     private void StartHealthMonitor()
