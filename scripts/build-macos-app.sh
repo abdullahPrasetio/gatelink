@@ -72,6 +72,17 @@ chmod +x "$APP/Contents/MacOS/GateLink"
 [ -f "$APP/Contents/MacOS/Assets/openconnect/vpnc-script" ] && chmod +x "$APP/Contents/MacOS/Assets/openconnect/vpnc-script"
 [ -f "$APP/Contents/MacOS/Assets/hipreport.sh" ] && chmod +x "$APP/Contents/MacOS/Assets/hipreport.sh"
 
+# Compile the LocalAuthentication helper. The reason is passed as argv; no
+# untrusted text is interpolated into source.
+if command -v swiftc >/dev/null 2>&1; then
+  swiftc -O "$ROOT/src/GateLink.Desktop/Platform/GateLinkAuth.swift" \
+    -o "$APP/Contents/MacOS/Assets/GateLinkAuth" 2>/dev/null && \
+    chmod +x "$APP/Contents/MacOS/Assets/GateLinkAuth" || \
+    echo "  (GateLinkAuth compile failed; Touch ID falls back to the Keychain prompt)"
+else
+  echo "  (swiftc not found; Touch ID falls back to the Keychain prompt)"
+fi
+
 # Ad-hoc codesign so Gatekeeper/hardened features behave on the local machine.
 if command -v codesign >/dev/null; then
   echo "Ad-hoc signing ..."

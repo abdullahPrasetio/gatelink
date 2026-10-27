@@ -10,11 +10,17 @@ namespace GateLink.Desktop.Platform;
 public sealed class VaultKeyGate : IBiometricGate
 {
     private readonly EncryptedFileSecretStore _store;
+    private readonly TouchIdGate _touchId = new();
 
     public VaultKeyGate(EncryptedFileSecretStore store) => _store = store;
 
     public bool IsAvailable => OperatingSystem.IsMacOS();
 
-    public Task<bool> VerifyAsync(string reason, CancellationToken ct = default)
-        => _store.UnlockAsync(ct);
+    public async Task<bool> VerifyAsync(string reason, CancellationToken ct = default)
+    {
+        // Touch ID first; the Keychain read follows. After the user chooses
+        // Always Allow once, only the Touch ID prompt remains.
+        if (!await _touchId.VerifyAsync(reason, ct)) return false;
+        return await _store.UnlockAsync(ct);
+    }
 }
