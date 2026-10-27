@@ -77,6 +77,11 @@ public partial class MainWindow : Window
 
     private void OnTogglePassword(object? sender, RoutedEventArgs e) => Vm?.TogglePassword();
 
+    private async void OnFillPassword(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is not null) await Vm.FillSavedPasswordAsync();
+    }
+
     private async void OnShowDetails(object? sender, RoutedEventArgs e)
     {
         if (Vm is null) return;

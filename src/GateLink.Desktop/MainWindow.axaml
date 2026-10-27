@@ -35,6 +35,14 @@
             <Setter Property="Background" Value="#3a3a3d" />
             <Setter Property="CornerRadius" Value="6" />
         </Style>
+        <Style Selector="Button.link">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Foreground" Value="#0a84ff" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+        </Style>
         <Style Selector="TextBlock.label">
             <Setter Property="Foreground" Value="#c7c7cc" />
             <Setter Property="FontSize" Value="12" />
@@ -170,6 +178,9 @@
                         </Button>
                     </Grid>
                 </Border>
+                <Button Classes="link" Content="Fill saved password" Margin="0,4,0,0"
+                        Click="OnFillPassword"
+                        ToolTip.Tip="Load the password stored in the encrypted vault" />
             </StackPanel>
 
             <Button Click="OnConnect" Margin="0,18,0,0" Height="44" CornerRadius="10"

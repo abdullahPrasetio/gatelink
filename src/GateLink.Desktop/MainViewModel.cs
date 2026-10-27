@@ -550,6 +550,33 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _ => "Connect",
     };
 
+    /// <summary>
+    /// Loads the password stored in the encrypted vault into the form. The
+    /// field is intentionally blank at startup (metadata-only load); this lets
+    /// the user confirm/fill it without making every launch prompt for unlock.
+    /// </summary>
+    public async Task FillSavedPasswordAsync()
+    {
+        if (_entry is null) return;
+
+        if (!await _vault.EnsureUnlockedAsync("Load saved password"))
+        {
+            StatusText = "Unlock cancelled";
+            return;
+        }
+
+        var secret = await _vault.LoadSecretAsync(_entry);
+        if (string.IsNullOrEmpty(secret?.VpnPassword))
+        {
+            StatusText = "No saved password. Type one and Connect.";
+            return;
+        }
+
+        Password = secret!.VpnPassword!;
+        PasswordRevealed = false;
+        StatusText = "Saved password loaded.";
+    }
+
     public async Task CopyOtpAsync(Func<string, Task> setClipboard)
     {
         if (_entry is null) return;
