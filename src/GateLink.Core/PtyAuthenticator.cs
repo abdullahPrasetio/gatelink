@@ -77,6 +77,19 @@ public static class PtyAuthenticator
 
         var text = output.ToString();
 
+        // dyld errors mean the bundled openconnect was built for a newer macOS
+        // than this machine. Do not present that as a credential failure.
+        if (text.Contains("Symbol not found", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("dyld", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("built for macOS", StringComparison.OrdinalIgnoreCase))
+        {
+            var detail = ExtractError(text);
+            throw new InvalidOperationException(
+                string.IsNullOrEmpty(detail)
+                    ? "OpenConnect is incompatible with this macOS. Rebuild the bundled engine."
+                    : $"OpenConnect is incompatible with this macOS: {detail}");
+        }
+
         if (!text.Contains("COOKIE", StringComparison.OrdinalIgnoreCase))
         {
             var detail = ExtractError(text);
@@ -135,8 +148,12 @@ public static class PtyAuthenticator
             if (line.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
                 line.Contains("error", StringComparison.OrdinalIgnoreCase) ||
                 line.Contains("denied", StringComparison.OrdinalIgnoreCase) ||
-                line.Contains("Unexpected", StringComparison.OrdinalIgnoreCase))
-                return line.Length > 90 ? line[..90] : line;
+                line.Contains("Unexpected", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("Symbol not found", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("dyld", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("built for macOS", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("spawn id", StringComparison.OrdinalIgnoreCase))
+                return line.Length > 120 ? line[..120] : line;
         }
         return string.Empty;
     }

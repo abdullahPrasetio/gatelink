@@ -59,7 +59,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>     <string>APPL</string>
   <key>CFBundleExecutable</key>      <string>GateLink</string>
   <key>CFBundleIconFile</key>        <string>GateLink</string>
-  <key>LSMinimumSystemVersion</key>  <string>12.0</string>
+  <key>LSMinimumSystemVersion</key>  <string>15.0</string>
   <key>LSUIElement</key>             <true/>
   <key>NSHighResolutionCapable</key> <true/>
 </dict>

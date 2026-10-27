@@ -36,3 +36,6 @@ gatelink-tunnel.log
 
 # Release signing key (never commit)
 .secrets/
+
+# Local findings/error logs (may contain usernames/gateways)
+temuan/

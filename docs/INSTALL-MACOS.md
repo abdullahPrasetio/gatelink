@@ -13,10 +13,12 @@ berjalan native di Apple Silicon maupun Intel.
 | **Homebrew** | package manager | lihat https://brew.sh |
 | **.NET SDK 8 atau 9** | build & run aplikasi | `brew install dotnet` atau unduh dari Microsoft |
 | **OpenConnect** | engine VPN sebenarnya | `brew install openconnect` |
-| **macOS 12+** | Avalonia & .NET | — |
+| **macOS 15+** | Avalonia, .NET, dan bundled openconnect Homebrew | — |
 
-> Catatan: proyek `GateLink.Core` menargetkan `net8.0` dan `GateLink.Desktop`
-> menargetkan `net9.0`. Jika hanya punya satu dari keduanya, build tetap jalan
+> Catatan: `GateLink.Core` menargetkan `net8.0` dan `GateLink.Desktop` menargetkan
+> `net9.0`. Bundled openconnect dibangun untuk macOS 15; untuk macOS 12–14, build
+> openconnect dari source dengan `MACOSX_DEPLOYMENT_TARGET=12.0` atau gunakan
+> instalasi Homebrew lokal yang kompatibel. Jika hanya punya satu dari keduanya, build tetap jalan
 > karena runtime yang lebih baru kompatibel ke belakang.
 
 ### Cek cepat prasyarat
