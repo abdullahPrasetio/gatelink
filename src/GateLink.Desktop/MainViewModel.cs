@@ -70,6 +70,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             });
         _session.Log += (_, line) => System.Diagnostics.Debug.WriteLine($"[vpn] {line}");
 
+        _autoUnlock = Platform.AppSettings.LoadAutoUnlock();
         Gateway = Platform.AppSettings.LoadGateway() ?? VpnConfig.Gateway;
         _openAtLogin = Platform.LoginItem.IsEnabled;  // reflect real state
         ButtonText = "Connect";
@@ -149,6 +150,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
                     _entries.AddRange(entries);
                     SetEntry(entries[0]);
                 });
+
+                if (AutoUnlock)
+                    _ = FillSavedPasswordAsync();
             }
             else
             {
@@ -265,6 +269,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             if (!Set(ref _openAtLogin, value)) return;
             Platform.LoginItem.Set(value);
+        }
+    }
+
+    private bool _autoUnlock;
+    public bool AutoUnlock
+    {
+        get => _autoUnlock;
+        set
+        {
+            if (!Set(ref _autoUnlock, value)) return;
+            Platform.AppSettings.SaveAutoUnlock(value);
+            if (value && _entry is not null)
+                _ = FillSavedPasswordAsync();
         }
     }
 

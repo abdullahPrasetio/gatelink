@@ -181,6 +181,10 @@
                 <Button Classes="link" Content="Fill saved password" Margin="0,4,0,0"
                         Click="OnFillPassword"
                         ToolTip.Tip="Load the password stored in the encrypted vault" />
+                <CheckBox Content="Auto-unlock with biometrics on launch"
+                          IsChecked="{Binding AutoUnlock, Mode=TwoWay}"
+                          Foreground="#c7c7cc" FontSize="11" Margin="0,4,0,0"
+                          ToolTip.Tip="Ask Touch ID / Windows Hello at launch and fill the saved password" />
             </StackPanel>
 
             <Button Click="OnConnect" Margin="0,18,0,0" Height="44" CornerRadius="10"
