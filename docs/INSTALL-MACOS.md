@@ -16,10 +16,11 @@ berjalan native di Apple Silicon maupun Intel.
 | **macOS 14+** | Avalonia, .NET, dan bundled openconnect Homebrew | — |
 
 > Catatan: `GateLink.Core` menargetkan `net8.0` dan `GateLink.Desktop` menargetkan
-> `net9.0`. Bundled openconnect dibangun untuk **macOS 14**; untuk macOS 12–13,
-> build openconnect dari source dengan `MACOSX_DEPLOYMENT_TARGET` yang cocok atau
-> gunakan instalasi Homebrew lokal yang kompatibel. Jangan memakai aset openconnect
-> dari mesin/CI macOS 15/26 di Mac 14 — dylib akan gagal `dyld: Symbol not found`.
+> App ini mensyaratkan **macOS 14+**. Bundled openconnect dibangun untuk macOS 14.
+> Untuk macOS 12–13, build ini **tidak didukung**: perlu build terpisah dengan
+> `LSMinimumSystemVersion` lebih rendah dan openconnect dari source/deployment
+> target 12/13. Jangan memakai aset openconnect dari mesin/CI macOS 15/26 di Mac
+> 14 — dylib akan gagal `dyld: Symbol not found`.
 >
 > Di Mac 14, build ulang dengan Homebrew lokal:
 > ```bash

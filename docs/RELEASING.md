@@ -55,8 +55,9 @@ because Homebrew's openconnect bottle carries that runner's deployment target.
 `macos-14` and fails if any bundled openconnect binary/dylib has
 `LC_BUILD_VERSION minos > 14.0`.
 
-If you need macOS 12–13, build openconnect from source with a matching
-`MACOSX_DEPLOYMENT_TARGET` instead of using the Homebrew bottle.
+This bundle requires macOS 14. macOS 12–13 needs a **separate build**: lower
+`LSMinimumSystemVersion` and build openconnect from source with a matching
+`MACOSX_DEPLOYMENT_TARGET`; the Homebrew bottle is not enough.
 
 ## Notarization
 
