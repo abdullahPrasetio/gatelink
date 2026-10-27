@@ -85,7 +85,7 @@ jobs:
 
   # Build the macOS app bundle too, so both platforms come from CI.
   build-macos:
-    runs-on: macos-15
+    runs-on: macos-14
     needs: test
     steps:
       - uses: actions/checkout@v4
@@ -105,16 +105,16 @@ jobs:
           ./scripts/bundle-openconnect.sh
       - name: Verify bundled openconnect deployment target
         run: |
-          MIN=15.0
+          MAX=14.0
           fail=0
           for f in src/GateLink.Desktop/Assets/openconnect/openconnect src/GateLink.Desktop/Assets/openconnect/*.dylib; do
             [ -f "$f" ] || continue
             v=$(otool -l "$f" | awk '/LC_BUILD_VERSION/{found=1} found && /minos/{print $2; exit}')
             echo "$f minos=$v"
             if [ -z "$v" ]; then echo "ERROR: cannot read minos for $f"; fail=1; continue; fi
-            lower=$(printf '%s\n%s\n' "$v" "$MIN" | sort -t. -k1,1n -k2,2n | head -1)
+            lower=$(printf '%s\n%s\n' "$v" "$MAX" | sort -t. -k1,1n -k2,2n | head -1)
             if [ "$lower" != "$v" ]; then
-              echo "ERROR: $f requires macOS $v, runner target is $MIN"
+              echo "ERROR: $f requires macOS $v, runner target is $MAX"
               fail=1
             fi
           done

@@ -59,7 +59,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>     <string>APPL</string>
   <key>CFBundleExecutable</key>      <string>GateLink</string>
   <key>CFBundleIconFile</key>        <string>GateLink</string>
-  <key>LSMinimumSystemVersion</key>  <string>15.0</string>
+  <key>LSMinimumSystemVersion</key>  <string>14.0</string>
   <key>LSUIElement</key>             <true/>
   <key>NSHighResolutionCapable</key> <true/>
 </dict>
@@ -75,7 +75,8 @@ chmod +x "$APP/Contents/MacOS/GateLink"
 # Compile the LocalAuthentication helper. The reason is passed as argv; no
 # untrusted text is interpolated into source.
 if command -v swiftc >/dev/null 2>&1; then
-  swiftc -O "$ROOT/src/GateLink.Desktop/Platform/GateLinkAuth.swift" \
+  swiftc -O -target "$(uname -m)-apple-macos14.0" \
+    "$ROOT/src/GateLink.Desktop/Platform/GateLinkAuth.swift" \
     -o "$APP/Contents/MacOS/Assets/GateLinkAuth" 2>/dev/null && \
     chmod +x "$APP/Contents/MacOS/Assets/GateLinkAuth" || \
     echo "  (GateLinkAuth compile failed; Touch ID falls back to the Keychain prompt)"

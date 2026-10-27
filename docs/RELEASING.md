@@ -52,10 +52,10 @@ Local signing:
 The macOS runner must not be newer than the oldest macOS you intend to support,
 because Homebrew's openconnect bottle carries that runner's deployment target.
 `macos-latest` can move to a newer major release; this workflow pins
-`macos-15` and fails if any bundled openconnect binary/dylib has
-`LC_BUILD_VERSION minos > 15.0`.
+`macos-14` and fails if any bundled openconnect binary/dylib has
+`LC_BUILD_VERSION minos > 14.0`.
 
-If you need macOS 12–14, build openconnect from source with a matching
+If you need macOS 12–13, build openconnect from source with a matching
 `MACOSX_DEPLOYMENT_TARGET` instead of using the Homebrew bottle.
 
 ## Notarization
