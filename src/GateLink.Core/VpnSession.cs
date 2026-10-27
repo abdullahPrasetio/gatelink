@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using GateLink.Core.Otp;
 using GateLink.Core.Vault;
 
@@ -29,6 +30,8 @@ public sealed class VpnSession : IAsyncDisposable
     private GpCookie? _lastCookie;
     private string? _lastUser;
     private CancellationTokenSource? _healthCts;
+    private readonly object _healthSync = new();
+    private readonly EventHandler<string> _runnerOutputHandler;
 
     public VpnPhase Phase { get; private set; } = VpnPhase.Idle;
     public int ReconnectAttempts { get; private set; }
@@ -43,7 +46,12 @@ public sealed class VpnSession : IAsyncDisposable
         _runner = new OpenConnectRunner(_env);
         _auth = new GlobalProtectAuthenticator(_runner);
 
-        _runner.OutputReceived += (_, line) => Log?.Invoke(this, line);
+        _runnerOutputHandler = (_, line) =>
+        {
+            try { Log?.Invoke(this, line); }
+            catch (Exception ex) { Debug.WriteLine($"[vpn] log handler: {ex.Message}"); }
+        };
+        _runner.OutputReceived += _runnerOutputHandler;
         _runner.Exited += OnTunnelExited;
     }
 
@@ -252,6 +260,18 @@ public sealed class VpnSession : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Detaches from the tunnel without stopping it. Used when the app quits so
+    /// background events cannot call into a shutting-down UI; the next launch
+    /// adopts the still-running tunnel from the pid file.
+    /// </summary>
+    public void Detach()
+    {
+        StopHealthMonitor();
+        try { _runner.OutputReceived -= _runnerOutputHandler; } catch { /* already gone */ }
+        try { _runner.Exited -= OnTunnelExited; } catch { /* already gone */ }
+    }
+
     public async Task DisconnectAsync()
     {
         Transition(VpnPhase.Disconnecting);
@@ -263,24 +283,33 @@ public sealed class VpnSession : IAsyncDisposable
 
     private void OnTunnelExited(object? sender, int exitCode)
     {
-        // Ignore if we already moved on (manual disconnect / idle).
-        if (Phase is VpnPhase.Disconnecting or VpnPhase.Idle) return;
+        try
+        {
+            // Ignore if we already moved on (manual disconnect / idle).
+            if (Phase is VpnPhase.Disconnecting or VpnPhase.Idle) return;
 
-        Log?.Invoke(this, $"Tunnel process exited (code {exitCode}).");
-        StopHealthMonitor();
+            Log?.Invoke(this, $"Tunnel process exited (code {exitCode}).");
+            StopHealthMonitor();
 
-        // openconnect handles transient drops itself (--reconnect-timeout). If
-        // the PROCESS has actually exited, the session is over — we don't launch
-        // a second openconnect (that caused the connect/reconnect glitch). Just
-        // reflect that we're no longer connected.
-        Transition(VpnPhase.Idle);
+            // openconnect handles transient drops itself (--reconnect-timeout).
+            // If the PROCESS has actually exited, the session is over — don't
+            // launch a second openconnect. Just reflect that we're not connected.
+            Transition(VpnPhase.Idle);
+        }
+        catch (Exception ex)
+        {
+            // This can run on a ThreadPool thread (Process.Exited). An escaping
+            // exception would abort the whole .NET process (SIGABRT).
+            Debug.WriteLine($"[vpn] exit handler: {ex.Message}");
+        }
     }
 
     private void StartHealthMonitor()
     {
         StopHealthMonitor();
-        _healthCts = new CancellationTokenSource();
-        var token = _healthCts.Token;
+        var cts = new CancellationTokenSource();
+        lock (_healthSync) { _healthCts = cts; }
+        var token = cts.Token;
         _ = Task.Run(async () =>
         {
             try
@@ -313,15 +342,30 @@ public sealed class VpnSession : IAsyncDisposable
 
     private void StopHealthMonitor()
     {
-        _healthCts?.Cancel();
-        _healthCts?.Dispose();
-        _healthCts = null;
+        CancellationTokenSource? cts;
+        lock (_healthSync)
+        {
+            cts = _healthCts;
+            _healthCts = null;
+        }
+
+        if (cts is null) return;
+        try { cts.Cancel(); } catch (ObjectDisposedException) { /* raced */ }
+        cts.Dispose();
     }
 
     private void Transition(VpnPhase next)
     {
         Phase = next;
-        PhaseChanged?.Invoke(this, next);
+        var handler = PhaseChanged;
+        if (handler is null) return;
+
+        try { handler(this, next); }
+        catch (Exception ex)
+        {
+            // Subscribers can run on a ThreadPool thread; never let them abort.
+            Debug.WriteLine($"[vpn] phase handler: {ex.Message}");
+        }
     }
 
     public async ValueTask DisposeAsync()

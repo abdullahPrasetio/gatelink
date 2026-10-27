@@ -24,6 +24,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private VaultEntry? _entry;      // currently displayed account
     private TotpGenerator? _generator;
     private bool _connected;
+    private bool _shuttingDown;
+    private readonly EventHandler<VpnPhase> _phaseHandler;
+    private readonly EventHandler<string> _logHandler;
 
     public MainViewModel()
     {
@@ -57,18 +60,33 @@ public sealed class MainViewModel : INotifyPropertyChanged
         };
 
         _session = new VpnSession();
-        _session.PhaseChanged += (_, phase) =>
-            Dispatcher.UIThread.Post(() =>
+        _phaseHandler = (_, phase) =>
+        {
+            if (_shuttingDown) return;
+            try
             {
-                if (phase == VpnPhase.Connected) _connectedSince = DateTime.Now;
-                Phase = phase;
-                ButtonText = PhaseLabel(phase);
-                _connected = phase is VpnPhase.Connected;
-                // Clear transient error text when a new phase starts cleanly.
-                if (phase is VpnPhase.Authenticating or VpnPhase.Connecting or VpnPhase.Connected)
-                    StatusText = "";
-            });
-        _session.Log += (_, line) => System.Diagnostics.Debug.WriteLine($"[vpn] {line}");
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (_shuttingDown) return;
+                    if (phase == VpnPhase.Connected) _connectedSince = DateTime.Now;
+                    Phase = phase;
+                    ButtonText = PhaseLabel(phase);
+                    _connected = phase is VpnPhase.Connected;
+                    // Clear transient error text when a new phase starts cleanly.
+                    if (phase is VpnPhase.Authenticating or VpnPhase.Connecting or VpnPhase.Connected)
+                        StatusText = "";
+                });
+            }
+            catch (Exception ex)
+            {
+                // PhaseChanged can be raised from a ThreadPool thread. Posting
+                // to a shutting-down dispatcher must never abort the process.
+                System.Diagnostics.Debug.WriteLine($"[vpn] phase handler: {ex.Message}");
+            }
+        };
+        _session.PhaseChanged += _phaseHandler;
+        _logHandler = (_, line) => System.Diagnostics.Debug.WriteLine($"[vpn] {line}");
+        _session.Log += _logHandler;
 
         _autoUnlock = Platform.AppSettings.LoadAutoUnlock();
         Gateway = Platform.AppSettings.LoadGateway() ?? VpnConfig.Gateway;
@@ -90,6 +108,25 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _ = CheckForUpdateAsync();
     }
 
+    /// <summary>
+    /// Detaches the UI from the session and stops background callbacks before
+    /// Avalonia shuts down. The tunnel itself is left running so the next launch
+    /// can adopt it (same behaviour as the old app).
+    /// </summary>
+    public Task ShutdownAsync()
+    {
+        if (_shuttingDown) return Task.CompletedTask;
+        _shuttingDown = true;
+
+        try { _timer.Stop(); } catch { /* best effort */ }
+        _session.PhaseChanged -= _phaseHandler;
+        _session.Log -= _logHandler;
+        _session.Detach();
+        _vault.Lock();
+
+        return Task.CompletedTask;
+    }
+
     // ---- auto-update ----
 
     private ReleaseInfo? _pendingUpdate;
@@ -102,15 +139,24 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     private async Task CheckForUpdateAsync()
     {
-        var release = await UpdateChecker.CheckAsync();
-        if (release is { IsNewer: true })
+        try
         {
-            _pendingUpdate = release;
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            var release = await UpdateChecker.CheckAsync();
+            if (_shuttingDown) return;
+            if (release is { IsNewer: true })
             {
-                UpdateAvailable = true;
-                UpdateText = $"New update ({release.TagName})";
-            });
+                _pendingUpdate = release;
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (_shuttingDown) return;
+                    UpdateAvailable = true;
+                    UpdateText = $"New update ({release.TagName})";
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[update] check: {ex.Message}");
         }
     }
 
@@ -141,11 +187,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         try
         {
+            if (_shuttingDown) return;
             var entries = (await _vault.LoadAllAsync()).Where(e => e.Id != "demo").ToList();
+            if (_shuttingDown) return;
             if (entries.Count > 0)
             {
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
+                    if (_shuttingDown) return;
                     _entries.Clear();
                     _entries.AddRange(entries);
                     SetEntry(entries[0]);
@@ -157,7 +206,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
             else
             {
                 await Dispatcher.UIThread.InvokeAsync(() =>
-                    AddMessage = "No account yet. Tap + to add your 2FA account.");
+                {
+                    if (_shuttingDown) return;
+                    AddMessage = "No account yet. Tap + to add your 2FA account.";
+                });
             }
         }
         catch
@@ -551,7 +603,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
         catch (Exception ex)
         {
-            StatusText = ex.Message;   // shown (wrapped) below the button
+            if (!_shuttingDown) StatusText = ex.Message;   // shown (wrapped) below the button
         }
     }
 
@@ -574,15 +626,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// </summary>
     public async Task FillSavedPasswordAsync()
     {
-        if (_entry is null) return;
+        if (_entry is null || _shuttingDown) return;
 
         if (!await _vault.EnsureUnlockedAsync("Load saved password"))
         {
-            StatusText = "Unlock cancelled";
+            if (!_shuttingDown) StatusText = "Unlock cancelled";
             return;
         }
+        if (_shuttingDown) return;
 
         var secret = await _vault.LoadSecretAsync(_entry);
+        if (_shuttingDown) return;
         if (string.IsNullOrEmpty(secret?.VpnPassword))
         {
             StatusText = "No saved password. Type one and Connect.";

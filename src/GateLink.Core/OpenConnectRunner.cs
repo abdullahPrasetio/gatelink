@@ -222,14 +222,24 @@ public sealed class OpenConnectRunner : IAsyncDisposable
                 snapshot = tunnelLog.ToString();
                 NoteFailure(line);
             }
-            OutputReceived?.Invoke(this, line);
+            try { OutputReceived?.Invoke(this, line); }
+            catch (Exception ex) { Debug.WriteLine($"[vpn] output handler: {ex.Message}"); }
             TryWriteTunnelLog(snapshot);
         }
 
         _process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         _process.OutputDataReceived += (_, e) => { if (e.Data is not null) Capture(e.Data); };
         _process.ErrorDataReceived += (_, e) => { if (e.Data is not null) Capture(e.Data); };
-        _process.Exited += (_, _) => Exited?.Invoke(this, _process?.ExitCode ?? -1);
+        _process.Exited += (_, _) =>
+        {
+            try { Exited?.Invoke(this, _process?.ExitCode ?? -1); }
+            catch (Exception ex)
+            {
+                // Process.Exited runs on a ThreadPool thread; an escaping
+                // exception would terminate the whole app.
+                Debug.WriteLine($"[vpn] exit event: {ex.Message}");
+            }
+        };
 
         _process.Start();
         _process.BeginOutputReadLine();

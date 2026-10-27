@@ -9,6 +9,7 @@ public partial class App : Application
 {
     private MainWindow? _window;
     private readonly MainViewModel _vm = new();
+    private bool _shutdownReady;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -19,6 +20,7 @@ public partial class App : Application
             // Menu bar / tray app: no dock entry; the popover is toggled from the
             // tray icon.
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            desktop.ShutdownRequested += OnShutdownRequested;
             _window = new MainWindow { DataContext = _vm };
 
             // Show the popover once on first launch so the user sees the UI
@@ -27,6 +29,22 @@ public partial class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private async void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
+    {
+        if (_shutdownReady) return;
+        e.Cancel = true;
+        try
+        {
+            await _vm.ShutdownAsync();
+        }
+        finally
+        {
+            _shutdownReady = true;
+            if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+                desktop.Shutdown();
+        }
     }
 
     private void OnTrayClicked(object? sender, System.EventArgs e) => TogglePopover();
