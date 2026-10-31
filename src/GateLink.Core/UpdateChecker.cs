@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Runtime.InteropServices;
 using System.Text.Json.Serialization;
 
 namespace GateLink.Core;
@@ -35,14 +36,18 @@ public static class UpdateChecker
             var tag = release.TagName.TrimStart('v', 'V');
             if (!Version.TryParse(tag, out var remote)) return null;
 
+            var assets = (release.Assets ?? Array.Empty<GitHubAsset>())
+                .Select(a => (Name: a.Name ?? "", Url: a.BrowserDownloadUrl ?? ""));
+            var (macAsset, macSignature) = SelectMacAssets(assets, RuntimeInformation.ProcessArchitecture);
+
             return new ReleaseInfo
             {
                 Version = remote,
                 TagName = release.TagName,
                 IsNewer = remote > CurrentVersion,
                 HtmlUrl = release.HtmlUrl ?? "",
-                MacAssetUrl = FindAsset(release, "GateLink.dmg", "macos"),
-                MacSignatureUrl = FindAssetExact(release, "GateLink.dmg.sig"),
+                MacAssetUrl = macAsset,
+                MacSignatureUrl = macSignature,
                 WindowsAssetUrl = FindAsset(release, "Setup.exe", "windows"),
             };
         }
@@ -52,14 +57,40 @@ public static class UpdateChecker
         }
     }
 
-    private static string? FindAssetExact(GitHubRelease r, string name)
+    /// <summary>
+    /// Picks the macOS DMG matching the running app's CPU architecture.
+    /// Dual-arch releases ship <c>GateLink-arm64.dmg</c> and
+    /// <c>GateLink-x64.dmg</c>; Apple Silicon also falls back to the single
+    /// <c>GateLink.dmg</c> used by older releases. An Intel app must never
+    /// fall back to that legacy file - it was arm64-only.
+    /// </summary>
+    internal static (string? AssetUrl, string? SignatureUrl) SelectMacAssets(
+        IEnumerable<(string Name, string Url)> assets,
+        Architecture architecture)
     {
-        if (r.Assets is null) return null;
-        foreach (var a in r.Assets)
+        var list = assets.Where(a => !string.IsNullOrEmpty(a.Url)).ToList();
+
+        var name = architecture == Architecture.Arm64
+            ? "GateLink-arm64.dmg"
+            : "GateLink-x64.dmg";
+        var url = FindExact(list, name);
+
+        if (url is null && architecture == Architecture.Arm64)
         {
-            if (a.BrowserDownloadUrl is null) continue;
+            name = "GateLink.dmg";
+            url = FindExact(list, name);
+        }
+
+        if (url is null) return (null, null);
+        return (url, FindExact(list, name + ".sig"));
+    }
+
+    private static string? FindExact(IEnumerable<(string Name, string Url)> assets, string name)
+    {
+        foreach (var a in assets)
+        {
             if (string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase))
-                return a.BrowserDownloadUrl;
+                return a.Url;
         }
         return null;
     }

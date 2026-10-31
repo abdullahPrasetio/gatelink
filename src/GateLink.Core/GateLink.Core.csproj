@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="GateLink.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Cross-platform QR decoding: SkiaSharp loads the image to a pixel
          buffer, ZXing.Net decodes it. Both run on Windows and macOS. -->
     <PackageReference Include="ZXing.Net" Version="0.16.11" />

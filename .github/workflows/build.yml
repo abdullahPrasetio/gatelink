@@ -83,10 +83,26 @@ jobs:
           path: installer/windows/output/GateLink-Setup.exe
           if-no-files-found: error
 
-  # Build the macOS app bundle too, so both platforms come from CI.
+  # Build the macOS app for both CPU architectures. The bundled OpenConnect
+  # engine is compiled from pinned sources with -mmacosx-version-min=14.0, so
+  # the newer runners (macOS 15/26) do not raise the app's minimum OS.
   build-macos:
-    runs-on: macos-14
+    runs-on: ${{ matrix.runner }}
     needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            dmg: GateLink-arm64.dmg
+            zip: GateLink-arm64.zip
+            legacy: true      # keep the old single-arch asset for older apps
+          - runner: macos-15-intel
+            arch: x64
+            dmg: GateLink-x64.dmg
+            zip: GateLink-x64.zip
+            legacy: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -99,9 +115,19 @@ jobs:
           if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then v="0.0.0"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "Building version $v"
-      - name: Install and bundle openconnect
+      - name: Install pkg-config if the image does not have it
+        run: command -v pkg-config >/dev/null || brew install pkg-config
+      - name: Build OpenConnect engine (macOS 14 deployment target)
+        env:
+          GATELINK_ENGINE_PREFIX: ${{ runner.temp }}/gatelink-engine
+        run: ./scripts/build-openconnect-engine.sh
+      - name: Bundle OpenConnect into the app
+        env:
+          GATELINK_ENGINE_PREFIX: ${{ runner.temp }}/gatelink-engine
         run: |
-          brew install openconnect
+          GATELINK_OPENCONNECT="$GATELINK_ENGINE_PREFIX/sbin/openconnect" \
+          GATELINK_EXTRA_PREFIX="$GATELINK_ENGINE_PREFIX" \
+          GATELINK_VPNC_SCRIPT="$GATELINK_ENGINE_PREFIX/etc/vpnc/vpnc-script" \
           ./scripts/bundle-openconnect.sh
       - name: Verify bundled openconnect deployment target
         run: |
@@ -118,6 +144,14 @@ jobs:
               fail=1
             fi
           done
+          # The engine must load with only system + @loader_path deps.
+          if otool -L src/GateLink.Desktop/Assets/openconnect/openconnect \
+             | tail -n +2 | awk '{print $1}' \
+             | grep -vE '^(@loader_path|/usr/lib|/System)' ; then
+            echo "ERROR: unbundled absolute dependency"
+            exit 1
+          fi
+          src/GateLink.Desktop/Assets/openconnect/openconnect --version
           exit $fail
 
       - name: Build .app bundle
@@ -126,6 +160,8 @@ jobs:
           GATELINK_VERSION: ${{ steps.ver.outputs.version }}
       - name: Build drag-to-install DMG
         run: ./scripts/build-macos-dmg.sh
+      - name: Name the architecture-specific DMG
+        run: cp dist/GateLink.dmg "dist/${{ matrix.dmg }}"
       - name: Sign macOS DMG for auto-update
         if: startsWith(github.ref, 'refs/tags/v')
         env:
@@ -134,29 +170,50 @@ jobs:
           if [ -n "${GATELINK_RELEASE_KEY}" ]; then
             printf '%s' "${GATELINK_RELEASE_KEY}" | base64 -D > "$RUNNER_TEMP/gatelink-release.key"
             chmod 600 "$RUNNER_TEMP/gatelink-release.key"
-            ./scripts/sign-release.sh dist/GateLink.dmg "$RUNNER_TEMP/gatelink-release.key"
+            ./scripts/sign-release.sh "dist/${{ matrix.dmg }}" "$RUNNER_TEMP/gatelink-release.key"
+            if [ "${{ matrix.legacy }}" = "true" ]; then
+              # Older apps look for the single-arch names; the bytes are identical.
+              cp "dist/${{ matrix.dmg }}.sig" dist/GateLink.dmg.sig
+              cp "dist/${{ matrix.dmg }}.sha256" dist/GateLink.dmg.sha256
+            fi
             rm -f "$RUNNER_TEMP/gatelink-release.key"
           else
             echo "::warning::GATELINK_RELEASE_KEY is not set; auto-update will refuse this release."
           fi
       - name: Zip the app
-        run: cd dist && zip -r GateLink-macos.zip GateLink.app
+        run: cd dist && zip -r "${{ matrix.zip }}" GateLink.app
       - name: Upload macOS app (zip)
         uses: actions/upload-artifact@v4
         with:
-          name: GateLink-macos
-          path: dist/GateLink-macos.zip
+          name: GateLink-macos-${{ matrix.arch }}
+          path: dist/${{ matrix.zip }}
           if-no-files-found: error
       - name: Upload macOS installer (dmg)
         uses: actions/upload-artifact@v4
         with:
-          name: GateLink-macos-dmg
+          name: GateLink-macos-${{ matrix.arch }}-dmg
+          path: dist/${{ matrix.dmg }}
+          if-no-files-found: error
+      - name: Upload legacy macOS DMG (arm64 only)
+        if: matrix.legacy
+        uses: actions/upload-artifact@v4
+        with:
+          name: GateLink-macos-legacy-dmg
           path: dist/GateLink.dmg
           if-no-files-found: error
       - name: Upload macOS signature
         uses: actions/upload-artifact@v4
         with:
-          name: GateLink-macos-signature
+          name: GateLink-macos-${{ matrix.arch }}-signature
+          path: |
+            dist/${{ matrix.dmg }}.sig
+            dist/${{ matrix.dmg }}.sha256
+          if-no-files-found: ignore
+      - name: Upload legacy macOS signature (arm64 only)
+        if: matrix.legacy
+        uses: actions/upload-artifact@v4
+        with:
+          name: GateLink-macos-legacy-signature
           path: |
             dist/GateLink.dmg.sig
             dist/GateLink.dmg.sha256
@@ -180,9 +237,16 @@ jobs:
           files: |
             artifacts/GateLink-windows-setup/GateLink-Setup.exe
             artifacts/GateLink-windows-x64/GateLink-windows-x64.zip
-            artifacts/GateLink-macos-dmg/GateLink.dmg
-            artifacts/GateLink-macos/GateLink-macos.zip
-            artifacts/GateLink-macos-signature/GateLink.dmg.sig
-            artifacts/GateLink-macos-signature/GateLink.dmg.sha256
+            artifacts/GateLink-macos-arm64-dmg/GateLink-arm64.dmg
+            artifacts/GateLink-macos-x64-dmg/GateLink-x64.dmg
+            artifacts/GateLink-macos-legacy-dmg/GateLink.dmg
+            artifacts/GateLink-macos-arm64/GateLink-arm64.zip
+            artifacts/GateLink-macos-x64/GateLink-x64.zip
+            artifacts/GateLink-macos-arm64-signature/GateLink-arm64.dmg.sig
+            artifacts/GateLink-macos-arm64-signature/GateLink-arm64.dmg.sha256
+            artifacts/GateLink-macos-x64-signature/GateLink-x64.dmg.sig
+            artifacts/GateLink-macos-x64-signature/GateLink-x64.dmg.sha256
+            artifacts/GateLink-macos-legacy-signature/GateLink.dmg.sig
+            artifacts/GateLink-macos-legacy-signature/GateLink.dmg.sha256
           fail_on_unmatched_files: false
           generate_release_notes: true

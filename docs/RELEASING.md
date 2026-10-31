@@ -18,22 +18,45 @@ If the secret is absent, CI still publishes the DMG but **does not sign it**;
 GateLink will refuse to auto-install that release and will open the download
 page instead.
 
+## Architecture-specific assets
+
+macOS releases ship two apps, both requiring macOS 14:
+
+| Asset | Architecture |
+|-------|--------------|
+| `GateLink-arm64.dmg` | Apple Silicon |
+| `GateLink-x64.dmg` | Intel |
+
+`GateLink.dmg` is a byte-identical copy of the arm64 DMG kept so apps released
+before dual-arch support can still auto-update. `UpdateChecker` picks the DMG
+matching `RuntimeInformation.ProcessArchitecture`; an Intel app never falls
+back to the arm64 legacy file, and a missing signature makes the updater open
+the release page instead of installing.
+
 ## Release flow
 
 1. Push a tag `vX.Y.Z`.
-2. CI builds the macOS `.app` and DMG.
-3. The `Sign macOS DMG for auto-update` step produces:
-   - `dist/GateLink.dmg.sig` (binary RSA signature)
-   - `dist/GateLink.dmg.sha256`
-4. The release job uploads the DMG, signature, and checksum.
-5. The app downloads the DMG, computes SHA-256, verifies the signature with the
-   pinned key, checks the bundle ID and code signature, then swaps the bundle
-   with rollback.
+2. CI builds both macOS apps in a matrix:
+   - `macos-15` → arm64
+   - `macos-15-intel` → x64
+3. Each job builds the OpenConnect engine from pinned sources with
+   `-mmacosx-version-min=14.0` (see below), bundles it into the `.app`, and
+   builds one DMG.
+4. On tags, the `Sign macOS DMG for auto-update` step produces:
+   - `dist/GateLink-arm64.dmg.sig` and `.sha256` (also copied to the legacy
+     `GateLink.dmg.sig` / `.sha256`)
+   - `dist/GateLink-x64.dmg.sig` and `.sha256`
+5. The release job uploads both DMGs, both signatures, both checksums, the
+   legacy arm64 copy, and the two zips.
+6. The app downloads the DMG for its own CPU, computes SHA-256, verifies the
+   signature with the pinned key, checks the bundle ID and code signature,
+   then swaps the bundle with rollback.
 
 Local signing:
 
 ```bash
-./scripts/sign-release.sh dist/GateLink.dmg .secrets/gatelink-release.key
+./scripts/sign-release.sh dist/GateLink-arm64.dmg .secrets/gatelink-release.key
+./scripts/sign-release.sh dist/GateLink-x64.dmg .secrets/gatelink-release.key
 ```
 
 ## Key rotation
@@ -47,17 +70,26 @@ Local signing:
 3. Update the `GATELINK_RELEASE_KEY` secret.
 4. Ship a release signed with the old key first, or require a manual update.
 
-## macOS runner compatibility
+## macOS runner compatibility and the bundled engine
 
-The macOS runner must not be newer than the oldest macOS you intend to support,
-because Homebrew's openconnect bottle carries that runner's deployment target.
-`macos-latest` can move to a newer major release; this workflow pins
-`macos-14` and fails if any bundled openconnect binary/dylib has
-`LC_BUILD_VERSION minos > 14.0`.
+GitHub no longer offers macOS 14 runners (retired November 2, 2026), and a
+Homebrew bottle poured on macOS 15/26 carries that OS as its `minos`. Copying
+a Homebrew openconnect would therefore raise GateLink's real minimum above the
+`LSMinimumSystemVersion` in `Info.plist`, producing `dyld: Symbol not found`
+on macOS 14.
 
-This bundle requires macOS 14. macOS 12–13 needs a **separate build**: lower
-`LSMinimumSystemVersion` and build openconnect from source with a matching
-`MACOSX_DEPLOYMENT_TARGET`; the Homebrew bottle is not enough.
+`scripts/build-openconnect-engine.sh` builds OpenSSL and OpenConnect from
+pinned sources with `-mmacosx-version-min=14.0`, using OpenSSL instead of
+GnuTLS so Homebrew's p11-kit/GnuTLS stack is not linked in. libxml2 comes from
+the SDK. CI verifies every bundled Mach-O has `minos <= 14.0`.
+
+The workflow uses `macos-15` (arm64) and `macos-15-intel` (x64). The runner
+version no longer determines the engine's deployment target, so moving to
+newer runners only changes the build toolchain; keep the `MAX=14.0` check.
+
+macOS 12–13 still needs a separate build: lower `LSMinimumSystemVersion`, set
+`TARGET` in `scripts/build-openconnect-engine.sh` (and `-target` in
+`scripts/build-macos-app.sh`), and use an SDK that supports that target.
 
 ## Notarization
 

@@ -9,13 +9,21 @@
 #
 # Output: src/GateLink.Desktop/Assets/openconnect/  (bundled into the .app later)
 #
-# Run this on a Mac that already has a working openconnect (e.g. via Homebrew).
+# Inputs:
+#   GATELINK_OPENCONNECT    openconnect binary to bundle (default: PATH/Homebrew)
+#   GATELINK_EXTRA_PREFIX   additional prefix whose dylibs should be copied and
+#                           rewritten to @loader_path (used by CI's source build)
+#   GATELINK_VPNC_SCRIPT    vpnc-script to bundle (default: Homebrew/system)
+#
+# Run this on a Mac that already has a working openconnect (e.g. via Homebrew),
+# or after scripts/build-openconnect-engine.sh.
 #
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/src/GateLink.Desktop/Assets/openconnect"
-OC="$(command -v openconnect || echo /opt/homebrew/bin/openconnect)"
+OC="${GATELINK_OPENCONNECT:-$(command -v openconnect || echo /opt/homebrew/bin/openconnect)}"
+EXTRA_PREFIX="${GATELINK_EXTRA_PREFIX:-}"
 
 if [ ! -x "$OC" ]; then
   echo "ERROR: openconnect not found. Install it first (brew install openconnect)." >&2
@@ -27,9 +35,13 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 
 # 1. Gather the binary + all non-system dylibs it needs (recursively).
-python3 - "$OC" "$OUT" <<'PY'
+python3 - "$OC" "$OUT" "$EXTRA_PREFIX" <<'PY'
 import subprocess, sys, os, shutil
-oc, out = sys.argv[1], sys.argv[2]
+oc, out, extra = sys.argv[1], sys.argv[2], sys.argv[3]
+prefixes = [p for p in ("/opt/homebrew", "/usr/local", extra) if p]
+
+def bundled(path):
+    return any(path == p or path.startswith(p + "/") for p in prefixes)
 
 def deps(f):
     try:
@@ -39,7 +51,7 @@ def deps(f):
     r = []
     for ln in lines:
         p = ln.strip().split(" ")[0]
-        if p.startswith("/opt/homebrew") or p.startswith("/usr/local"):
+        if bundled(p):
             r.append(p)
     return r
 
@@ -69,18 +81,23 @@ print("copied", len(refs), "dylibs +", "openconnect")
 PY
 
 # 2. Rewrite load paths to @loader_path so the set is relocatable.
+is_bundled_dep() {
+  local dep="$1"
+  [[ "$dep" == /opt/homebrew/* || "$dep" == /usr/local/* ]] && return 0
+  [[ -n "$EXTRA_PREFIX" && "$dep" == "$EXTRA_PREFIX"/* ]] && return 0
+  return 1
+}
+
 echo "Rewriting dylib paths..."
 cd "$OUT"
 for f in openconnect *.dylib; do
   [ -f "$f" ] || continue
   # For each non-system dependency, repoint it to @loader_path/<basename>.
   otool -L "$f" | tail -n +2 | awk '{print $1}' | while read -r dep; do
-    case "$dep" in
-      /opt/homebrew/*|/usr/local/*)
-        base="$(basename "$dep")"
-        install_name_tool -change "$dep" "@loader_path/$base" "$f" 2>/dev/null || true
-        ;;
-    esac
+    if is_bundled_dep "$dep"; then
+      base="$(basename "$dep")"
+      install_name_tool -change "$dep" "@loader_path/$base" "$f" 2>/dev/null || true
+    fi
   done
   # Fix the library's own id too.
   if [[ "$f" == *.dylib ]]; then
@@ -93,12 +110,16 @@ done
 # 3. Bundle vpnc-script (needed to configure routes on connect).
 # Use deterministic locations first; `find | head` can trip pipefail.
 VPNC=""
-for candidate in \
-  /opt/homebrew/etc/vpnc/vpnc-script \
-  /usr/local/etc/vpnc/vpnc-script \
-  /etc/vpnc/vpnc-script; do
-  if [ -f "$candidate" ]; then VPNC="$candidate"; break; fi
-done
+if [ -n "${GATELINK_VPNC_SCRIPT:-}" ] && [ -f "$GATELINK_VPNC_SCRIPT" ]; then
+  VPNC="$GATELINK_VPNC_SCRIPT"
+else
+  for candidate in \
+    /opt/homebrew/etc/vpnc/vpnc-script \
+    /usr/local/etc/vpnc/vpnc-script \
+    /etc/vpnc/vpnc-script; do
+    if [ -f "$candidate" ]; then VPNC="$candidate"; break; fi
+  done
+fi
 if [ -z "$VPNC" ]; then
   VPNC="$(find /opt/homebrew /usr/local -name vpnc-script -print -quit 2>/dev/null || true)"
 fi

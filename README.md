@@ -5,9 +5,9 @@ A macOS menu-bar and Windows tray client for **GlobalProtect** VPN gateways, bui
 GlobalProtect two-factor authentication flow (password + OTP), obtains the WebVPN
 session cookie, then launches `openconnect` to establish the tunnel.
 
-This is an independent, clean-room Windows client. It implements its own UI and
-process orchestration in C#/.NET; the VPN protocol itself is handled by the
-open-source OpenConnect binary.
+This is an independent, clean-room client for macOS and Windows. It implements
+its own UI and process orchestration in C#/.NET; the VPN protocol itself is
+handled by the open-source OpenConnect binary.
 
 ## Status
 
@@ -45,11 +45,12 @@ openconnect --protocol=gp --cookie-on-stdin --servercert <fp> <gateway>
   vault for a sliding window, then cached key material is dropped.
 
 `GateLink.Core` is platform-neutral (`net8.0`) and fully unit-tested on any OS
-(82 tests, including the RFC 6238 TOTP vectors, QR round-trips, vault encryption and release signatures). Only the UI
+(88 tests, including the RFC 6238 TOTP vectors, QR round-trips, vault encryption and release signatures). Only the UI
 layer is platform-specific.
 
 ## Requirements
 
+- macOS 14+ on Apple Silicon (`GateLink-arm64.dmg`) or Intel (`GateLink-x64.dmg`)
 - Windows 10/11 x64 (the app requests administrator elevation for the adapter)
 - [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) to build
 - OpenConnect for Windows on PATH (or bundled) with the Wintun driver

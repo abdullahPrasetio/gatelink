@@ -6,42 +6,64 @@ berjalan native di Apple Silicon maupun Intel.
 
 ---
 
+## 0. Unduh aplikasi (Apple Silicon vs Intel)
+
+| Mac | File |
+|-----|------|
+| Apple Silicon (M1/M2/M3/...) | `GateLink-arm64.dmg` |
+| Intel | `GateLink-x64.dmg` |
+
+Cek arsitektur dengan `uname -m`: `arm64` = Apple Silicon, `x86_64` = Intel.
+Keduanya memerlukan **macOS 14+**. `GateLink.dmg` adalah salinan arm64 untuk
+kompatibilitas auto-update aplikasi lama; jangan memakainya di Mac Intel.
+
 ## 1. Prasyarat
 
 | Prasyarat | Untuk apa | Cara pasang |
 |-----------|-----------|-------------|
-| **Homebrew** | package manager | lihat https://brew.sh |
+| **Homebrew** | package manager (dotnet, pkg-config) | lihat https://brew.sh |
 | **.NET SDK 8 atau 9** | build & run aplikasi | `brew install dotnet` atau unduh dari Microsoft |
-| **OpenConnect** | engine VPN sebenarnya | `brew install openconnect` |
-| **macOS 14+** | Avalonia, .NET, dan bundled openconnect Homebrew | — |
+| **OpenConnect** | engine VPN sebenarnya | sudah dibundel di app rilis; untuk build lokal jalankan `./scripts/build-openconnect-engine.sh` |
+| **Xcode Command Line Tools** | compile engine openconnect lokal | `xcode-select --install` |
+| **pkg-config** | configure openconnect | `brew install pkg-config` |
+| **macOS 14+** | Avalonia, .NET, dan bundled openconnect | — |
 
 > Catatan: `GateLink.Core` menargetkan `net8.0` dan `GateLink.Desktop` menargetkan
-> App ini mensyaratkan **macOS 14+**. Bundled openconnect dibangun untuk macOS 14.
-> Untuk macOS 12–13, build ini **tidak didukung**: perlu build terpisah dengan
-> `LSMinimumSystemVersion` lebih rendah dan openconnect dari source/deployment
-> target 12/13. Jangan memakai aset openconnect dari mesin/CI macOS 15/26 di Mac
-> 14 — dylib akan gagal `dyld: Symbol not found`.
+> `net9.0`. App ini memerlukan **macOS 14+** dan tersedia untuk Apple Silicon
+> maupun Intel. Engine openconnect dibangun dari source (OpenSSL + OpenConnect)
+> dengan deployment target 14.0, jadi tidak memakai bottle Homebrew macOS 15/26
+> yang akan gagal `dyld: Symbol not found` di Mac 14.
 >
-> Di Mac 14, build ulang dengan Homebrew lokal:
+> Untuk macOS 12–13, build ini **tidak didukung**: perlu build terpisah dengan
+> `LSMinimumSystemVersion` dan target engine yang lebih rendah.
+>
+> Build lokal di Mac 14 tanpa openconnect Homebrew:
 > ```bash
-> brew install openconnect
+> ./scripts/build-openconnect-engine.sh
+> PREFIX="${TMPDIR:-/tmp}"; PREFIX="${PREFIX%/}/gatelink-engine"
+> GATELINK_OPENCONNECT="$PREFIX/sbin/openconnect" \
+> GATELINK_EXTRA_PREFIX="$PREFIX" \
+> GATELINK_VPNC_SCRIPT="$PREFIX/etc/vpnc/vpnc-script" \
 > ./scripts/bundle-openconnect.sh
 > ./scripts/build-macos-app.sh
-> ``` Jika hanya punya satu dari keduanya, build tetap jalan
-> karena runtime yang lebih baru kompatibel ke belakang.
+> ```
+> `bundle-openconnect.sh` masih bisa memakai openconnect dari Homebrew untuk
+> lokal, tetapi hasilnya mengikuti bottle OS tersebut (minos 15/26) — jangan
+> dipakai untuk build yang akan didistribusikan ke Mac 14.
 
 ### Cek cepat prasyarat
 
 ```bash
 brew --version
 dotnet --info | head -5          # pastikan ada SDK 8.x atau 9.x
-openconnect --version            # mis. OpenConnect version v9.21
+openconnect --version            # opsional; app rilis sudah membundel engine
 ```
 
-Jika `openconnect` belum ada:
+Jika `openconnect` belum ada dan kamu ingin build lokal, bangun engine dengan
+deployment target 14 (bukan bottle Homebrew macOS 15/26):
 
 ```bash
-brew install openconnect
+./scripts/build-openconnect-engine.sh
 ```
 
 ---
@@ -53,6 +75,16 @@ menu bar tanpa ikon dock):
 
 ```bash
 cd GateLink
+
+# Sekali per clone / setelah update engine: build OpenConnect dari source
+# dengan deployment target 14.0, lalu masukkan ke aset app.
+./scripts/build-openconnect-engine.sh
+PREFIX="${TMPDIR:-/tmp}"; PREFIX="${PREFIX%/}/gatelink-engine"
+GATELINK_OPENCONNECT="$PREFIX/sbin/openconnect" \
+GATELINK_EXTRA_PREFIX="$PREFIX" \
+GATELINK_VPNC_SCRIPT="$PREFIX/etc/vpnc/vpnc-script" \
+./scripts/bundle-openconnect.sh
+
 ./scripts/build-macos-app.sh
 ```
 
@@ -96,7 +128,7 @@ Jendela GateLink akan muncul: header dengan status koneksi, kartu kode OTP
 
 ## 3. Menjalankan test (opsional, tanpa GUI)
 
-Logika inti (TOTP, parser QR, vault) punya 32 unit test:
+Logika inti (TOTP, parser QR, vault) punya 88 unit test:
 
 ```bash
 dotnet test tests/GateLink.Core.Tests
@@ -209,4 +241,4 @@ Catatan jujur tentang yang belum diverifikasi penuh:
 - **Windows** — DPAPI + Windows Hello sudah di-compile untuk target Windows,
   tetapi belum dijalankan di mesin Windows dalam pengujian ini.
 
-Semua logika VPN & OTP ada di `GateLink.Core` (82 unit test lulus).
+Semua logika VPN & OTP ada di `GateLink.Core` (88 unit test lulus).
